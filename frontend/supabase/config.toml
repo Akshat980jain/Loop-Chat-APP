@@ -1,0 +1,28 @@
+project_id = "slsvdfhfsokbaptzbclz"
+
+[functions.get-stories]
+verify_jwt = false
+
+[functions.create-story]
+verify_jwt = false
+
+[functions.update-profile]
+verify_jwt = false
+
+[functions.upload-avatar]
+verify_jwt = false
+
+[functions.record-story-view]
+verify_jwt = false
+
+[functions.login-with-phone]
+verify_jwt = false
+
+[functions.get-profile]
+verify_jwt = false
+
+[functions.daily-room]
+verify_jwt = false
+
+[functions.send-push-notification]
+verify_jwt = false

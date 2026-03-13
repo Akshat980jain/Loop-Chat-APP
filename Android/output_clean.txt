@@ -1,0 +1,668 @@
+﻿./gradlew : WARNING: A restricted method in java.lang.System has 
+been called
+At line:1 char:1
++ ./gradlew assembleDebug > output.txt 2>&1
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (WARNING: A rest...ha 
+   s been called:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+WARNING: java.lang.System::load has been called by 
+net.rubygrapefruit.platform.internal.NativeLibraryLoader in an 
+unnamed module (file:/C:/Users/hp/.gradle/wrapper/dists/gradle-8.5
+-bin/5t9huq95ubn472n8rpzujfbqh/gradle-8.5/lib/native-platform-0.22
+-milestone-25.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a 
+warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release 
+unless native access is enabled
+
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:processDebugGoogleServices UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:mergeDebugShaders UP-TO-DATE
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:compressDebugAssets UP-TO-DATE
+> Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :app:mergeLibDexDebug UP-TO-DATE
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugNativeLibs UP-TO-DATE
+> Task :app:stripDebugDebugSymbols UP-TO-DATE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :app:writeDebugAppMetadata UP-TO-DATE
+> Task :app:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :app:compileDebugKotlin
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/components/SearchComponents.kt:167:57 Unresolved 
+reference: email
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/components/SearchComponents.kt:182:32 Unresolved 
+reference: email
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/navigation/Navigation.kt:265:35 Type mismatch: 
+inferred type is (Any?, Any?) -> Unit but () -> Unit was expected
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/navigation/Navigation.kt:265:37 Cannot infer a 
+type for this parameter. Please specify it explicitly.
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/navigation/Navigation.kt:265:37 Expected no 
+parameters 
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/navigation/Navigation.kt:265:42 Cannot infer a 
+type for this parameter. Please specify it explicitly.
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/navigation/Navigation.kt:297:17 Cannot find a 
+parameter with this name: currentDeviceId
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:97:18 Unexpected tokens (use 
+';' to separate expressions on the same line)
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:101:13 Expecting an element
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:299:2 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:622:2 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:724:2 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:931:2 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:966:2 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1015:2 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1068:2 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1183:2 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1238:2 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1366:2 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1454:2 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1492:2 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1539:13 Expecting an element
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1704:6 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1750:6 Expecting ','
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1773:6 Expecting ')'
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:84:17 Unresolved reference: 
+actions
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:86:25 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:90:25 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:94:21 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:98:17 Unresolved reference: 
+colors
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:103:9 Cannot find a 
+parameter with this name: bottomBar
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:104:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:141:9 Cannot find a 
+parameter with this name: floatingActionButton
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:143:17 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:156:7 Type mismatch: 
+inferred type is ([Error type: Cannot infer a lambda parameter 
+type]) -> Unit but TopAppBarScrollBehavior? was expected
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:156:9 Cannot infer a type 
+for this parameter. Please specify it explicitly.
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:157:9 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:160:18 Overload resolution 
+ambiguity: 
+public fun Modifier.padding(paddingValues: PaddingValues): 
+Modifier defined in androidx.compose.foundation.layout
+public fun Modifier.padding(all: Dp): Modifier defined in 
+androidx.compose.foundation.layout
+public fun Modifier.padding(horizontal: Dp = ..., vertical: Dp = 
+...): Modifier defined in androidx.compose.foundation.layout
+public fun Modifier.padding(start: Dp = ..., top: Dp = ..., end: 
+Dp = ..., bottom: Dp = ...): Modifier defined in 
+androidx.compose.foundation.layout
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:195:60 Unresolved reference: 
+message
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:209:26 Unresolved reference: 
+ChatsTab
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:216:26 Unresolved reference: 
+CallsTab
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:219:44 Cannot infer a type 
+for this parameter. Please specify it explicitly.
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:219:55 Cannot infer a type 
+for this parameter. Please specify it explicitly.
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:223:26 Unresolved reference: 
+ContactsTab
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:226:44 Cannot infer a type 
+for this parameter. Please specify it explicitly.
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:227:56 Cannot infer a type 
+for this parameter. Please specify it explicitly.
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:234:26 Unresolved reference: 
+SettingsTab
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:301:1 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:302:1 Modifier 'private' is 
+not applicable to 'local function'
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:302:13 Anonymous functions 
+with names are prohibited
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:312:40 Unresolved reference: 
+conversations
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:313:9 Unresolved reference: 
+conversations
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:314:57 Unresolved reference: 
+it
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:555:50 Unresolved reference: 
+conversations
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:563:24 Unresolved reference: 
+conversations
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:582:44 Type mismatch: 
+inferred type is Int but ConversationWithParticipant was expected
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:583:84 Unresolved reference: 
+id
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:584:82 Unresolved reference: 
+id
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:585:74 Unresolved reference: 
+id
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:586:97 Unresolved reference: 
+id
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:596:9 Unresolved reference: 
+StoryViewerDialog
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:604:9 Unresolved reference: 
+StoryPreviewDialog
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:607:24 Cannot infer a type 
+for this parameter. Please specify it explicitly.
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:625:1 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:626:1 Modifier 'private' is 
+not applicable to 'local function'
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:626:13 Anonymous functions 
+with names are prohibited
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:727:1 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:728:1 Modifier 'private' is 
+not applicable to 'local function'
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:728:13 Anonymous functions 
+with names are prohibited
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:757:55 Unresolved reference: 
+formatTimeAgo
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:869:25 None of the following 
+functions can be called with the arguments supplied: 
+public fun Text(text: AnnotatedString, modifier: Modifier = ..., 
+color: Color = ..., fontSize: TextUnit = ..., fontStyle: 
+FontStyle? = ..., fontWeight: FontWeight? = ..., fontFamily: 
+FontFamily? = ..., letterSpacing: TextUnit = ..., textDecoration: 
+TextDecoration? = ..., textAlign: TextAlign? = ..., lineHeight: 
+TextUnit = ..., overflow: TextOverflow = ..., softWrap: Boolean = 
+..., maxLines: Int = ..., minLines: Int = ..., inlineContent: 
+Map<String, InlineTextContent> = ..., onTextLayout: 
+(TextLayoutResult) -> Unit = ..., style: TextStyle = ...): Unit 
+defined in androidx.compose.material3
+public fun Text(text: String, modifier: Modifier = ..., color: 
+Color = ..., fontSize: TextUnit = ..., fontStyle: FontStyle? = 
+..., fontWeight: FontWeight? = ..., fontFamily: FontFamily? = 
+..., letterSpacing: TextUnit = ..., textDecoration: 
+TextDecoration? = ..., textAlign: TextAlign? = ..., lineHeight: 
+TextUnit = ..., overflow: TextOverflow = ..., softWrap: Boolean = 
+..., maxLines: Int = ..., minLines: Int = ..., onTextLayout: 
+(TextLayoutResult) -> Unit = ..., style: TextStyle = ...): Unit 
+defined in androidx.compose.material3
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:914:1 Unresolved reference: 
+private
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:914:13 Anonymous functions 
+with names are prohibited
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:933:1 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:934:1 Modifier 'private' is 
+not applicable to 'local function'
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:934:13 Anonymous functions 
+with names are prohibited
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:959:17 Unresolved reference: 
+ContactItem
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:968:1 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:969:1 Modifier 'private' is 
+not applicable to 'local function'
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:969:13 Anonymous functions 
+with names are prohibited
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1005:21 Unresolved 
+reference: ContactCallCard
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1017:1 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1018:1 Modifier 'private' is 
+not applicable to 'local function'
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1018:13 Anonymous functions 
+with names are prohibited
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1020:26 An anonymous 
+function is not allowed to specify default values for its 
+parameters
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1070:1 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1071:1 Modifier 'private' is 
+not applicable to 'local function'
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1071:13 Anonymous functions 
+with names are prohibited
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1074:25 An anonymous 
+function is not allowed to specify default values for its 
+parameters
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1075:24 An anonymous 
+function is not allowed to specify default values for its 
+parameters
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1076:34 An anonymous 
+function is not allowed to specify default values for its 
+parameters
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1078:36 Unresolved 
+reference: otherParticipant
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1080:36 Unresolved 
+reference: unreadCount
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1133:30 Unresolved 
+reference: lastMessageTimestamp
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1133:58 Cannot infer a type 
+for this parameter. Please specify it explicitly.
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1135:32 Unresolved 
+reference: formatTimeAgo
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1136:47 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1185:1 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1186:1 Modifier 'private' is 
+not applicable to 'local function'
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1186:13 Anonymous functions 
+with names are prohibited
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1240:1 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1242:1 Modifier 'private' is 
+not applicable to 'local function'
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1242:13 Anonymous functions 
+with names are prohibited
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1251:27 An anonymous 
+function is not allowed to specify default values for its 
+parameters
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1252:26 An anonymous 
+function is not allowed to specify default values for its 
+parameters
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1368:1 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1369:1 Modifier 'private' is 
+not applicable to 'local function'
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1369:13 Anonymous functions 
+with names are prohibited
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1456:1 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1457:1 Modifier 'private' is 
+not applicable to 'local function'
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1457:13 Anonymous functions 
+with names are prohibited
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1494:1 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1495:5 Anonymous functions 
+with names are prohibited
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1543:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1544:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1545:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1547:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1548:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1560:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1561:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1562:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1564:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1565:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1575:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1576:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1586:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1587:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1599:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1600:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1601:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1603:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1604:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1611:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1612:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1622:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1623:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1632:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1633:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1634:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1636:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1637:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1644:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1645:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1654:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1655:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1656:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1658:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1659:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1667:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1668:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1675:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1676:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1683:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1684:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1691:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1692:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1701:9 Unresolved reference: 
+item
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1702:13 @Composable 
+invocations can only happen from the context of a @Composable 
+function
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1707:5 'if' must have both 
+main and 'else' branches if used as an expression
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1707:5 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1707:9 Unresolved reference: 
+showLogoutDialog
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1709:39 Unresolved 
+reference: isLoggingOut
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1709:53 Unresolved 
+reference: showLogoutDialog
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1713:21 Unresolved 
+reference: isLoggingOut
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1726:25 Unresolved 
+reference: isLoggingOut
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1727:25 Unresolved 
+reference: coroutineScope
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1728:43 Unresolved 
+reference: settingsRepository
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1729:29 Unresolved 
+reference: isLoggingOut
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1730:29 Unresolved 
+reference: showLogoutDialog
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1736:32 Unresolved 
+reference: isLoggingOut
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1743:33 Unresolved 
+reference: showLogoutDialog
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1744:32 Unresolved 
+reference: isLoggingOut
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1753:5 'if' must have both 
+main and 'else' branches if used as an expression
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1753:5 Mixing named and 
+positioned arguments is not allowed
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1753:9 Unresolved reference: 
+showClearCacheDialog
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1755:34 Unresolved 
+reference: showClearCacheDialog
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1762:21 Unresolved 
+reference: showClearCacheDialog
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/screens/HomeScreen.kt:1768:40 Unresolved 
+reference: showClearCacheDialog
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/viewmodels/EnhancedChatViewModel.kt:129:33 Type 
+mismatch: inferred type is Set<Unit> but Set<String> was expected
+
+> Task :app:compileDebugKotlin FAILED
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/viewmodels/EnhancedChatViewModel.kt:129:50 
+Unresolved reference: message_id
+e: file:///E:/Lovable%20Chat%20App/Android/app/src/main/java/com/l
+oopchat/app/ui/viewmodels/EnhancedChatViewModel.kt:129:63 Type 
+mismatch: inferred type is Unit but String was expected
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compiler
+Runner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAct
+ion
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 1m 26s
+30 actionable tasks: 2 executed, 28 up-to-date
