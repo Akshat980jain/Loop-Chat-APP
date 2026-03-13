@@ -1,0 +1,29 @@
+{
+    "project_info": {
+        "project_number": "592622367944",
+        "project_id": "loopchat-9ad9d",
+        "storage_bucket": "loopchat-9ad9d.firebasestorage.app"
+    },
+    "client": [
+        {
+            "client_info": {
+                "mobilesdk_app_id": "1:592622367944:android:a993bc4f10f8b19e2f0926",
+                "android_client_info": {
+                    "package_name": "com.loopchat.app"
+                }
+            },
+            "oauth_client": [],
+            "api_key": [
+                {
+                    "current_key": "AIzaSyDlwEzt_dTWjQhYZaLj0CjYlRqVTbofO3E"
+                }
+            ],
+            "services": {
+                "appinvite_service": {
+                    "other_platform_oauth_client": []
+                }
+            }
+        }
+    ],
+    "configuration_version": "1"
+}
