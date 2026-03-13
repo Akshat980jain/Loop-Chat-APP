@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.loopchat.app.BuildConfig
 import com.loopchat.app.data.SupabaseClient
@@ -488,11 +489,22 @@ fun CallScreen(
                 Log.w(TAG, "Could not verify call status: ${e.message}, proceeding anyway")
             }
             
+            // === ACTUALLY JOIN THE DAILY.CO ROOM ===
+            callStatus = "Joining room..."
+            Log.d(TAG, "=== CALLEE JOINING DAILY.CO ROOM ===")
+            Log.d(TAG, "Room URL: $roomUrl")
+            Log.d(TAG, "Meeting token present: ${!meetingToken.isNullOrEmpty()}")
+            
+            DailyCallManager.initialize(context)
+            DailyCallManager.joinCall(
+                roomUrl = roomUrl!!,
+                meetingToken = meetingToken,
+                isVideoCall = callType == "video"
+            )
+            
             callStatus = "Connected"
             isConnected = true
             Log.d(TAG, "=== CALLEE CONNECTED ===")
-            Log.d(TAG, "Final room URL: $roomUrl")
-            Log.d(TAG, "Final meeting token present: ${!meetingToken.isNullOrEmpty()}")
             return@LaunchedEffect
         }
         
@@ -520,12 +532,23 @@ fun CallScreen(
                             CallSoundManager.stopAllSounds()
                             isRinging = false
                             callStatus = "Connecting..."
-                            // Use the room URL we created earlier
-                            Log.d(TAG, "Caller connecting to room: $roomUrl")
+                            
+                            // === ACTUALLY JOIN THE DAILY.CO ROOM ===
+                            Log.d(TAG, "=== CALLER JOINING DAILY.CO ROOM ===")
+                            Log.d(TAG, "Room URL: $roomUrl")
+                            Log.d(TAG, "Meeting token present: ${!meetingToken.isNullOrEmpty()}")
+                            
+                            DailyCallManager.initialize(context)
+                            DailyCallManager.joinCall(
+                                roomUrl = roomUrl!!,
+                                meetingToken = meetingToken,
+                                isVideoCall = callType == "video"
+                            )
+                            
                             delay(500)
                             callStatus = "Connected"
                             isConnected = true
-                            Log.d(TAG, "Call accepted, joined Daily room!")
+                            Log.d(TAG, "Call accepted, caller joined Daily room!")
                         }
                         "rejected" -> {
                             CallSoundManager.stopAllSounds()
