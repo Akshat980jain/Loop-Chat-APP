@@ -38,7 +38,7 @@ fun CallHistoryScreen(
     var contactProfile by remember { mutableStateOf<Profile?>(null) }
     val coroutineScope = rememberCoroutineScope()
     
-    // Fetch call history for this contact
+    // Fetch call history for this contact (paginated — loads all pages)
     LaunchedEffect(contactUserId) {
         isLoading = true
         
@@ -48,15 +48,28 @@ fun CallHistoryScreen(
             contactProfile = profile
         }
         
-        // Get all calls and filter for this contact
-        val callsResult = SupabaseRepository.getCallHistory()
-        callsResult.onSuccess { allCalls ->
-            calls = allCalls.filter { call ->
-                (call.isOutgoing && call.calleeId == contactUserId) ||
-                (!call.isOutgoing && call.callerId == contactUserId)
+        // Paginate through ALL calls and filter for this contact
+        val allCalls = mutableListOf<CallWithProfile>()
+        var offset = 0
+        val pageSize = 50
+        var hasMore = true
+        
+        while (hasMore) {
+            val callsResult = SupabaseRepository.getCallHistory(offset = offset, limit = pageSize)
+            callsResult.onSuccess { page ->
+                val filtered = page.filter { call ->
+                    (call.isOutgoing && call.calleeId == contactUserId) ||
+                    (!call.isOutgoing && call.callerId == contactUserId)
+                }
+                allCalls.addAll(filtered)
+                offset += page.size
+                hasMore = page.size >= pageSize
+            }.onFailure {
+                hasMore = false
             }
         }
         
+        calls = allCalls
         isLoading = false
     }
     

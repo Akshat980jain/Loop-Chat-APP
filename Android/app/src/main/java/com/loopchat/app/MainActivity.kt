@@ -31,7 +31,7 @@ class MainActivity : ComponentActivity() {
     }
     
     // Call navigation data passed from CallService or notifications
-    private var pendingCallNavigation: CallNavigationData? = null
+    private val pendingCallNavigation = kotlinx.coroutines.flow.MutableStateFlow<CallNavigationData?>(null)
     
     data class CallNavigationData(
         val callId: String,
@@ -65,7 +65,7 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermission()
         
         setContent {
-            val callNavData = remember { mutableStateOf(pendingCallNavigation) }
+            val callNavData by pendingCallNavigation.collectAsState()
             
             LoopChatTheme {
                 Surface(
@@ -73,14 +73,12 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     LoopChatNavigation(
-                        initialCallData = callNavData.value
+                        initialCallData = callNavData,
+                        onCallDataConsumed = {
+                            pendingCallNavigation.value = null
+                        }
                     )
                 }
-            }
-            
-            // Clear pending navigation after it's consumed
-            LaunchedEffect(Unit) {
-                pendingCallNavigation = null
             }
         }
     }
@@ -107,7 +105,7 @@ class MainActivity : ComponentActivity() {
             
             Log.d(TAG, "Navigating to call: callId=$callId, from=$callerName, type=$callType")
             
-            pendingCallNavigation = CallNavigationData(
+            pendingCallNavigation.value = CallNavigationData(
                 callId = callId,
                 callerId = callerId,
                 callerName = callerName,

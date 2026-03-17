@@ -218,7 +218,8 @@ fun SmallGradientAvatar(
     initial: String,
     imageUrl: String? = null,
     modifier: Modifier = Modifier,
-    size: Dp = 48.dp
+    size: Dp = 48.dp,
+    isGroup: Boolean = false
 ) {
     Box(
         modifier = modifier

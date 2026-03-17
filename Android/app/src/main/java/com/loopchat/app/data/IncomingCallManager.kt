@@ -108,7 +108,7 @@ object IncomingCallManager {
         
         try {
             val response = httpClient.get("$supabaseUrl/rest/v1/calls") {
-                parameter("select", "id,caller_id,callee_id,call_type,status,room_url,callee_token,caller_token,room_name,created_at")
+                parameter("select", "*")
                 parameter("callee_id", "eq.$currentUserId")
                 parameter("status", "eq.ringing")
                 parameter("order", "created_at.desc")
@@ -260,6 +260,18 @@ object IncomingCallManager {
     }
     
     /**
+     * Mark the current incoming call as accepted by the background service
+     * This preserves the data for CallScreen but stops the ringing
+     */
+    fun markCallAsAcceptedByService() {
+        Log.d(TAG, "Call accepted via service, preserving data for CallScreen")
+        _incomingCall.value?.let {
+            _lastAcceptedCall = it
+        }
+        clearIncomingCall()
+    }
+    
+    /**
      * Start playing ringtone and vibrating
      */
     private fun startRingtone(context: Context) {
@@ -331,7 +343,7 @@ object IncomingCallManager {
         
         try {
             val response = httpClient.get("$supabaseUrl/rest/v1/calls") {
-                parameter("select", "id,status")
+                parameter("select", "*")
                 parameter("id", "eq.${callData.call.id}")
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")

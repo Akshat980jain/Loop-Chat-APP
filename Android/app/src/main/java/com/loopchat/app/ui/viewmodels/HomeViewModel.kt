@@ -14,6 +14,7 @@ import com.loopchat.app.data.SupabaseRepository
 import com.loopchat.app.data.models.Profile
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class HomeViewModel : ViewModel() {
@@ -130,18 +131,45 @@ class HomeViewModel : ViewModel() {
         }
     }
     
+    private var callsOffset = 0
+    private val callsPageSize = 50
+    var hasMoreCalls by mutableStateOf(true)
+        private set
+    var isLoadingMoreCalls by mutableStateOf(false)
+        private set
+
     fun loadCalls() {
         viewModelScope.launch {
             isLoadingCalls = true
+            callsOffset = 0
+            hasMoreCalls = true
             
-            val result = SupabaseRepository.getCallHistory()
+            val result = SupabaseRepository.getCallHistory(offset = 0, limit = callsPageSize)
             result.onSuccess { callList ->
                 calls = callList
+                callsOffset = callList.size
+                hasMoreCalls = callList.size >= callsPageSize
             }.onFailure { e ->
                 // Don't set error for calls tab
             }
             
             isLoadingCalls = false
+        }
+    }
+
+    fun loadMoreCalls() {
+        if (isLoadingMoreCalls || !hasMoreCalls) return
+        viewModelScope.launch {
+            isLoadingMoreCalls = true
+            
+            val result = SupabaseRepository.getCallHistory(offset = callsOffset, limit = callsPageSize)
+            result.onSuccess { callList ->
+                calls = calls + callList
+                callsOffset += callList.size
+                hasMoreCalls = callList.size >= callsPageSize
+            }
+            
+            isLoadingMoreCalls = false
         }
     }
     
@@ -230,28 +258,6 @@ class HomeViewModel : ViewModel() {
         loadContacts()
         loadCalls()
         loadPhase2Data()
-    }
-    
-    /**
-     * Start periodic polling of conversations every 10 seconds.
-     * Called when Chats tab is visible.
-     */
-    fun startPolling() {
-        pollingJob?.cancel()
-        pollingJob = viewModelScope.launch {
-            while (true) {
-                delay(10_000L) // 10 seconds
-                loadConversations()
-            }
-        }
-    }
-    
-    /**
-     * Stop polling when Chats tab is no longer visible.
-     */
-    fun stopPolling() {
-        pollingJob?.cancel()
-        pollingJob = null
     }
     
     // ============================================
@@ -419,5 +425,30 @@ class HomeViewModel : ViewModel() {
     
     fun isConversationMuted(conversationId: String): Boolean {
         return mutedConversations.contains(conversationId)
+    }
+
+    // ============================================
+    // CONVERSATION LIST POLLING
+    // ============================================
+
+    fun startPolling() {
+        pollingJob?.cancel()
+        pollingJob = viewModelScope.launch {
+            while (isActive) {
+                delay(10_000) // Poll every 10 seconds
+                loadConversations()
+                loadCalls()
+            }
+        }
+    }
+
+    fun stopPolling() {
+        pollingJob?.cancel()
+        pollingJob = null
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopPolling()
     }
 }

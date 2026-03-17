@@ -461,7 +461,7 @@ fun ProfileScreen(
                                     value = "${SupabaseClient.currentUserId?.take(12) ?: "null"}..."
                                 )
                                 
-                                if (!displayUsername.isNullOrEmpty()) {
+                                if (displayUsername.isNotEmpty()) {
                                     Spacer(modifier = Modifier.height(12.dp))
                                     ProfileInfoRow(
                                         icon = Icons.Default.AlternateEmail,

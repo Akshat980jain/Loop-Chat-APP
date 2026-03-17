@@ -65,10 +65,12 @@ fun ChatScreen(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         // Gradient Avatar
+                        val isGroupChat = chatViewModel.currentConversation?.is_group == true
                         SmallGradientAvatar(
                             initial = otherUserName.firstOrNull()?.toString() ?: "?",
                             imageUrl = otherUserAvatar,
-                            size = 42.dp
+                            size = 42.dp,
+                            isGroup = isGroupChat
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {

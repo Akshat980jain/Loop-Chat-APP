@@ -741,7 +741,7 @@ private fun StoryViewerDialog(
     onDismiss: () -> Unit
 ) {
     if (stories.isEmpty()) {
-        onDismiss()
+        LaunchedEffect(Unit) { onDismiss() }
         return
     }
 
@@ -1090,6 +1090,21 @@ private fun ConversationItem(
     val lastMessage = conversation.lastMessage
     val unreadCount = 0 // conversation.unreadCount is not available yet
     
+    // Determine display properties based on whether it's a group
+    val displayName = if (conversation.isGroup) {
+        conversation.groupName ?: "Unnamed Group"
+    } else {
+        participant?.fullName ?: participant?.username ?: "Unknown"
+    }
+
+    val displayAvatarUrl = if (conversation.isGroup) {
+        conversation.groupAvatarUrl
+    } else {
+        participant?.avatarUrl
+    }
+    
+    val initialChar = displayName.firstOrNull()?.toString() ?: "?"
+    
     GlassCard(
         modifier = Modifier
             .fillMaxWidth()
@@ -1108,16 +1123,17 @@ private fun ConversationItem(
         ) {
             // Gradient Avatar
             SmallGradientAvatar(
-                initial = participant?.fullName?.firstOrNull()?.toString() ?: "?",
-                imageUrl = participant?.avatarUrl,
-                size = 52.dp
+                initial = initialChar,
+                imageUrl = displayAvatarUrl,
+                size = 52.dp,
+                isGroup = conversation.isGroup // If the component supports it, or just use as normal avatar
             )
             
             Spacer(modifier = Modifier.width(12.dp))
             
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = participant?.fullName ?: participant?.username ?: "Unknown",
+                    text = displayName,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = TextPrimary
@@ -1543,8 +1559,16 @@ fun SettingsTab(
             SettingsItem(
                 icon = Icons.Default.Person,
                 title = "Account",
-                subtitle = "Privacy, security, change number",
+                subtitle = "Profile details",
                 onClick = onProfileClick
+            )
+        }
+        item {
+            SettingsItem(
+                icon = Icons.Default.Security,
+                title = "Security",
+                subtitle = "Two-step verification, device management",
+                onClick = { onNavigate("security_settings") }
             )
         }
         
@@ -1611,10 +1635,10 @@ fun SettingsTab(
         }
         item {
             SettingsItem(
-                icon = Icons.Default.Visibility,
-                title = "Last Seen",
-                subtitle = "Everyone",
-                onClick = { }
+                icon = Icons.Default.Lock,
+                title = "Privacy Settings",
+                subtitle = "Last seen, profile photo, about",
+                onClick = { onNavigate("privacy_settings") }
             )
         }
         item {
@@ -1633,7 +1657,7 @@ fun SettingsTab(
                 icon = Icons.Default.Block,
                 title = "Blocked Users",
                 subtitle = "Manage blocked contacts",
-                onClick = { }
+                onClick = { onNavigate("blocked_users") }
             )
         }
         
@@ -1647,7 +1671,7 @@ fun SettingsTab(
                 icon = Icons.Default.Storage,
                 title = "Storage Usage",
                 subtitle = "View storage used by app",
-                onClick = { }
+                onClick = { /* Implement storage usage screen if needed or just show info */ }
             )
         }
         item {

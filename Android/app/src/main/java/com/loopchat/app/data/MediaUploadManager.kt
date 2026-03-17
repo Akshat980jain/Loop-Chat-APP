@@ -13,6 +13,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.net.URLConnection
+import android.webkit.MimeTypeMap
 import java.util.UUID
 
 /**
@@ -37,7 +39,8 @@ object MediaUploadManager {
             mediaUri = imageUri,
             bucket = "media",
             folder = "images",
-            httpClient = httpClient
+            httpClient = httpClient,
+            forcedMimeType = "image/jpeg"
         )
     }
     
@@ -100,7 +103,8 @@ object MediaUploadManager {
         mediaUri: Uri,
         bucket: String,
         folder: String,
-        httpClient: HttpClient
+        httpClient: HttpClient,
+        forcedMimeType: String? = null
     ): Result<MediaUploadResult> = withContext(Dispatchers.IO) {
         try {
             val accessToken = SupabaseClient.getAccessToken()
@@ -108,12 +112,21 @@ object MediaUploadManager {
             
             // Get file info
             val fileInfo = getFileInfo(context, mediaUri)
-            val fileName = "${UUID.randomUUID()}.${fileInfo.extension}"
+            // Use forced MIME type if provided (e.g. after compression we know it's image/jpeg)
+            val finalMimeType = forcedMimeType ?: fileInfo.mimeType
+            val finalExtension = if (forcedMimeType != null) getExtensionFromMimeType(finalMimeType) else fileInfo.extension
+            val fileName = "${UUID.randomUUID()}.$finalExtension"
             val filePath = if (folder.isNotEmpty()) "$folder/$fileName" else fileName
             
-            // Read file bytes
-            val fileBytes = context.contentResolver.openInputStream(mediaUri)?.use { it.readBytes() }
-                ?: return@withContext Result.failure(Exception("Failed to read file"))
+            Log.d("MediaUpload", "Uploading: mime=$finalMimeType, ext=$finalExtension, path=$filePath")
+            
+            // Read file bytes — for file:// URIs, read directly from the file
+            val fileBytes = if (mediaUri.scheme == "file") {
+                java.io.File(mediaUri.path!!).readBytes()
+            } else {
+                context.contentResolver.openInputStream(mediaUri)?.use { it.readBytes() }
+                    ?: return@withContext Result.failure(Exception("Failed to read file"))
+            }
             
             // Upload to Supabase Storage
             val uploadUrl = "$SUPABASE_URL/storage/v1/object/$bucket/$filePath"
@@ -122,7 +135,7 @@ object MediaUploadManager {
                 header("apikey", SUPABASE_KEY)
                 header("Authorization", "Bearer $accessToken")
                 setBody(fileBytes)
-                contentType(ContentType.parse(fileInfo.mimeType))
+                contentType(ContentType.parse(finalMimeType))
             }
             
             if (!response.status.isSuccess()) {
@@ -154,22 +167,62 @@ object MediaUploadManager {
      * Get file information from URI
      */
     private fun getFileInfo(context: Context, uri: Uri): FileInfo {
-        val cursor = context.contentResolver.query(uri, null, null, null, null)
         var name = "file"
         var size = 0L
         var mimeType = "application/octet-stream"
         
-        cursor?.use {
-            if (it.moveToFirst()) {
-                val nameIndex = it.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
-                val sizeIndex = it.getColumnIndex(MediaStore.MediaColumns.SIZE)
-                
-                if (nameIndex >= 0) name = it.getString(nameIndex) ?: "file"
-                if (sizeIndex >= 0) size = it.getLong(sizeIndex)
+        // For file:// URIs, read info directly from the File object
+        if (uri.scheme == "file") {
+            val file = java.io.File(uri.path!!)
+            name = file.name   // e.g. "compressed_abc123.jpg"
+            size = file.length()
+            Log.d("MediaUpload", "file:// URI detected, name=$name, size=$size")
+        } else {
+            // For content:// URIs, use ContentResolver
+            val cursor = context.contentResolver.query(uri, null, null, null, null)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val nameIndex = it.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+                    val sizeIndex = it.getColumnIndex(MediaStore.MediaColumns.SIZE)
+                    if (nameIndex >= 0) name = it.getString(nameIndex) ?: "file"
+                    if (sizeIndex >= 0) size = it.getLong(sizeIndex)
+                }
             }
         }
         
-        mimeType = context.contentResolver.getType(uri) ?: mimeType
+        // Try content resolver first
+        var resolvedType = context.contentResolver.getType(uri)
+        
+        // Fallback 1: MimeTypeMap using file extension from name
+        if (resolvedType == null || resolvedType == "application/octet-stream") {
+            val fileExtension = android.webkit.MimeTypeMap.getFileExtensionFromUrl(name.replace(" ", "%20"))
+            if (!fileExtension.isNullOrEmpty()) {
+                val mappedType = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(fileExtension.toLowerCase())
+                if (mappedType != null) {
+                    resolvedType = mappedType
+                }
+            }
+        }
+        
+        // Fallback 2: URLConnection guess from name
+        if (resolvedType == null || resolvedType == "application/octet-stream") {
+            val guessedType = URLConnection.guessContentTypeFromName(name)
+            if (guessedType != null) {
+                resolvedType = guessedType
+            }
+        }
+        
+        // Final fallback if all fails for an image/video/etc
+        if (resolvedType == null || resolvedType == "application/octet-stream") {
+            if (name.endsWith(".jpg", ignoreCase = true) || name.endsWith(".jpeg", ignoreCase = true)) resolvedType = "image/jpeg"
+            else if (name.endsWith(".png", ignoreCase = true)) resolvedType = "image/png"
+            else if (name.endsWith(".gif", ignoreCase = true)) resolvedType = "image/gif"
+            else if (name.endsWith(".mp4", ignoreCase = true)) resolvedType = "video/mp4"
+            else if (name.endsWith(".pdf", ignoreCase = true)) resolvedType = "application/pdf"
+        }
+        
+        mimeType = resolvedType ?: "application/octet-stream"
+        
         val extension = getExtensionFromMimeType(mimeType)
         
         // Get dimensions for images/videos

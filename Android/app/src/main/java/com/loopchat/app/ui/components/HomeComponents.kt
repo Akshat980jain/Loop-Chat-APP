@@ -88,16 +88,31 @@ fun ConversationItem(
                 )
             }
     ) {
+        // Determine display properties based on whether it's a group
+        val displayName = if (conversation.isGroup) {
+            conversation.groupName ?: "Unnamed Group"
+        } else {
+            conversation.participant?.fullName ?: conversation.participant?.username ?: "Unknown User"
+        }
+
+        val displayAvatarUrl = if (conversation.isGroup) {
+            conversation.groupAvatarUrl
+        } else {
+            conversation.participant?.avatarUrl
+        }
+
+        val initialChar = displayName.firstOrNull()?.toString() ?: "?"
+
         Row(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Avatar
-            if (!conversation.participant?.avatarUrl.isNullOrEmpty()) {
+            if (!displayAvatarUrl.isNullOrEmpty()) {
                 AsyncImage(
-                    model = conversation.participant!!.avatarUrl,
-                    contentDescription = conversation.participant.fullName,
+                    model = displayAvatarUrl,
+                    contentDescription = displayName,
                     modifier = Modifier
                         .size(56.dp)
                         .clip(CircleShape),
@@ -105,8 +120,9 @@ fun ConversationItem(
                 )
             } else {
                 SmallGradientAvatar(
-                    initial = (conversation.participant?.fullName ?: conversation.participant?.username ?: "?").firstOrNull()?.toString() ?: "?",
-                    size = 56.dp
+                    initial = initialChar,
+                    size = 56.dp,
+                    isGroup = conversation.isGroup // Added parameter assuming it exists or can be ignored
                 )
             }
             
@@ -118,7 +134,7 @@ fun ConversationItem(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = conversation.participant?.fullName ?: "User",
+                        text = displayName,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary,

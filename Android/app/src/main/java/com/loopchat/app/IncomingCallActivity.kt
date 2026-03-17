@@ -30,6 +30,10 @@ import com.loopchat.app.services.CallService
 import com.loopchat.app.ui.components.GradientAvatar
 import com.loopchat.app.ui.theme.*
 import kotlinx.coroutines.delay
+import com.loopchat.app.ui.components.CameraPreview
+import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.rememberMultiplePermissionsState
+import android.Manifest
 
 /**
  * Full-screen Activity for incoming calls.
@@ -164,6 +168,7 @@ class IncomingCallActivity : ComponentActivity() {
 /**
  * Composable UI for incoming call screen
  */
+@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun IncomingCallScreen(
     callerName: String,
@@ -173,8 +178,18 @@ fun IncomingCallScreen(
 ) {
     var animatedScale by remember { mutableFloatStateOf(1f) }
     
+    val cameraPermissionState = rememberMultiplePermissionsState(
+        permissions = listOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO
+        )
+    )
+    
     // Pulsing animation for avatar
     LaunchedEffect(Unit) {
+        if (!cameraPermissionState.allPermissionsGranted) {
+            cameraPermissionState.launchMultiplePermissionRequest()
+        }
         while (true) {
             animatedScale = 1.1f
             delay(500)
@@ -188,38 +203,55 @@ fun IncomingCallScreen(
             .fillMaxSize()
             .background(Background)
     ) {
-        // Decorative gradient orbs
-        Box(
-            modifier = Modifier
-                .size(500.dp)
-                .align(Alignment.TopCenter)
-                .offset(y = (-150).dp)
-                .blur(150.dp)
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Primary.copy(alpha = 0.3f),
-                            Color.Transparent
+        if (callType == "video" && cameraPermissionState.allPermissionsGranted) {
+            CameraPreview(
+                modifier = Modifier.fillMaxSize(),
+                isFrontCamera = true,
+                isEnabled = true
+            )
+        } else {
+            // Decorative gradient orbs for audio calls or when permissions not granted
+            Box(
+                modifier = Modifier
+                    .size(500.dp)
+                    .align(Alignment.TopCenter)
+                    .offset(y = (-150).dp)
+                    .blur(150.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Primary.copy(alpha = 0.3f),
+                                Color.Transparent
+                            )
                         )
                     )
-                )
-        )
+            )
+            
+            Box(
+                modifier = Modifier
+                    .size(400.dp)
+                    .align(Alignment.BottomStart)
+                    .offset(x = (-100).dp, y = 100.dp)
+                    .blur(120.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Secondary.copy(alpha = 0.25f),
+                                Color.Transparent
+                            )
+                        )
+                    )
+            )
+        }
         
-        Box(
-            modifier = Modifier
-                .size(400.dp)
-                .align(Alignment.BottomStart)
-                .offset(x = (-100).dp, y = 100.dp)
-                .blur(120.dp)
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Secondary.copy(alpha = 0.25f),
-                            Color.Transparent
-                        )
-                    )
-                )
-        )
+        // Semi-transparent overlay to make text readable over the camera
+        if (callType == "video") {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f))
+            )
+        }
         
         Column(
             modifier = Modifier

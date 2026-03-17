@@ -55,6 +55,9 @@ object DailyCallManager : CallClientListener {
     // Whether local user has joined the room
     private val _isJoined = MutableStateFlow(false)
     val isJoined: StateFlow<Boolean> = _isJoined.asStateFlow()
+    
+    // Store the intended call type to enable AFTER joining
+    private var intendedInitialVideoState = true
 
     /**
      * Initialize the native call client (should be done before joining)
@@ -74,16 +77,22 @@ object DailyCallManager : CallClientListener {
         Log.d(TAG, "Joining room: $roomUrl, isVideoCall=$isVideoCall")
         resetState()
         
-        _isVideoEnabled.value = isVideoCall
+        intendedInitialVideoState = isVideoCall
+        // Initially set state to disconnected/off values while joining
+        _isVideoEnabled.value = false
+        _isMuted.value = true
+        
         // The Daily.co native SDK join method is asynchronous
         callClient?.apply {
-            // Apply initial input states before joining to avoid starting camera for audio-only calls
-            setInputsEnabled(
-                camera = isVideoCall,
-                microphone = true
-            )
-            join(roomUrl, meetingToken?.let { MeetingToken(it) }) { 
-                it.error?.let { err -> _error.value = err.toString() }
+            // STEP 1: Explicitly disable inputs PRE-JOIN so tracks don't initialize prematurely and throw "Not all tracks were ready"
+            setInputsEnabled(camera = false, microphone = false)
+            
+            // STEP 2: Join the room
+            join(roomUrl, meetingToken?.let { MeetingToken(it) }) { result ->
+                result.error?.let { err -> 
+                    Log.e(TAG, "Join error: $err")
+                    _error.value = err.toString() 
+                }
             }
         } ?: Log.e(TAG, "Cannot join: CallClient is null. Did you initialize?")
     }
@@ -142,7 +151,7 @@ object DailyCallManager : CallClientListener {
                 // Determine current camera device ID. If null, use the first one.
                 val currentDeviceId = callClient?.inputs()?.camera?.settings?.deviceId
                 
-                // Find a device that is different from the current one
+                // Find a device that is different from the current one9
                 val nextDevice = cameraDevices.firstOrNull { device -> device.deviceId != currentDeviceId }
                     ?: cameraDevices.first()
 
@@ -209,8 +218,14 @@ object DailyCallManager : CallClientListener {
         
         when (state) {
             CallState.joined -> {
-                Log.d(TAG, "Successfully joined the WebRTC meeting")
+                Log.d(TAG, "Successfully joined the WebRTC meeting. Enabling intended tracks now.")
                 _isJoined.value = true
+                
+                // STEP 3: Enable the intended inputs AFTER join is completed
+                callClient?.setInputsEnabled(camera = intendedInitialVideoState, microphone = true)
+                _isVideoEnabled.value = intendedInitialVideoState
+                _isMuted.value = false
+                
                 updateParticipants()
             }
             CallState.left -> {

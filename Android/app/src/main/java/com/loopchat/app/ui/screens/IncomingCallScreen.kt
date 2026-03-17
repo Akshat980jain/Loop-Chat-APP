@@ -20,7 +20,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.loopchat.app.data.IncomingCallManager
 import com.loopchat.app.ui.components.GradientAvatar
 import com.loopchat.app.ui.theme.*
 import kotlinx.coroutines.delay
@@ -29,12 +28,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun IncomingCallScreen(
     callerName: String,
-    callerAvatar: String?,
     callType: String,
     onAccept: () -> Unit,
     onReject: () -> Unit
 ) {
-    val coroutineScope = rememberCoroutineScope()
     var isAccepting by remember { mutableStateOf(false) }
     var isRejecting by remember { mutableStateOf(false) }
     var remainingSeconds by remember { mutableIntStateOf(30) } // 30 second timeout
@@ -68,15 +65,12 @@ fun IncomingCallScreen(
             remainingSeconds--
             
             // Also check if call is still ringing every 3 seconds
-            if (remainingSeconds % 3 == 0) {
-                IncomingCallManager.refreshCallStatus()
-            }
+            // (Caller should handle actual ringing state via a separate effect or flow)
         }
         
         // Auto-reject if not accepted within 30 seconds
         if (remainingSeconds == 0 && !isAccepting && !isRejecting) {
             isRejecting = true
-            IncomingCallManager.rejectCall()
             onReject()
         }
     }
@@ -215,10 +209,7 @@ fun IncomingCallScreen(
                             onClick = {
                                 if (!isRejecting && !isAccepting) {
                                     isRejecting = true
-                                    coroutineScope.launch {
-                                        IncomingCallManager.rejectCall()
-                                        onReject()
-                                    }
+                                    onReject()
                                 }
                             },
                             modifier = Modifier.fillMaxSize(),
@@ -263,14 +254,9 @@ fun IncomingCallScreen(
                             onClick = {
                                 if (!isAccepting && !isRejecting) {
                                     isAccepting = true
-                                    coroutineScope.launch {
-                                        val call = IncomingCallManager.acceptCall()
-                                        if (call != null) {
-                                            onAccept()
-                                        } else {
-                                            isAccepting = false
-                                        }
-                                    }
+                                    onAccept()
+                                    // Depending on whether it navigates away or fails, the host might need to compose again 
+                                    // or reset the state, but usually navigation destroys this screen.
                                 }
                             },
                             modifier = Modifier.fillMaxSize(),

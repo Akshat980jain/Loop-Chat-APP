@@ -20,9 +20,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.loopchat.app.data.MessageWithSender
 import com.loopchat.app.data.SupabaseClient
@@ -45,13 +48,35 @@ fun EnhancedChatScreen(
     val listState = rememberLazyListState()
     val currentUserId = SupabaseClient.currentUserId
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     
     var showMessageMenu by remember { mutableStateOf(false) }
     var selectedMessageForMenu by remember { mutableStateOf<MessageWithSender?>(null) }
+    var showAttachmentMenu by remember { mutableStateOf(false) }
+    
+    // File picker launchers
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let { chatViewModel.onMediaSelected(it, "image") } }
+    
+    val videoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let { chatViewModel.onMediaSelected(it, "video") } }
+    
+    val documentPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let { chatViewModel.onMediaSelected(it, "document") } }
     
     // Load messages on first composition
     LaunchedEffect(conversationId) {
-        chatViewModel.loadMessages(conversationId)
+        chatViewModel.loadMessages(conversationId, context)
+    }
+    
+    // Start/stop message listening with screen lifecycle
+    DisposableEffect(conversationId) {
+        onDispose {
+            com.loopchat.app.data.realtime.SupabaseRealtimeClient.disconnect()
+        }
     }
     
     // Scroll to bottom when new message arrives
@@ -83,10 +108,12 @@ fun EnhancedChatScreen(
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        val isGroupChat = chatViewModel.currentConversation?.is_group == true
                         SmallGradientAvatar(
                             initial = otherUserName.firstOrNull()?.toString() ?: "?",
                             imageUrl = otherUserAvatar,
-                            size = 42.dp
+                            size = 42.dp,
+                            isGroup = isGroupChat
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
@@ -297,6 +324,99 @@ fun EnhancedChatScreen(
                 }
             }
             
+            // Attachment menu popup
+            AnimatedVisibility(
+                visible = showAttachmentMenu,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { it })
+            ) {
+                AttachmentMenu(
+                    onImageSelected = { imagePickerLauncher.launch("image/*") },
+                    onVideoSelected = { videoPickerLauncher.launch("video/*") },
+                    onDocumentSelected = { documentPickerLauncher.launch("*/*") },
+                    onLocationSelected = { /* future */ },
+                    onCameraSelected = { /* future */ },
+                    onDismiss = { showAttachmentMenu = false },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+            
+            // Media preview strip (shown when file is selected before sending)
+            chatViewModel.selectedMediaUri?.let { uri ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = SurfaceVariant,
+                    tonalElevation = 2.dp
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .padding(12.dp)
+                            .fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Surface),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            when (chatViewModel.selectedMediaType) {
+                                "image" -> {
+                                    coil.compose.AsyncImage(
+                                        model = uri,
+                                        contentDescription = "Selected image",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                    )
+                                }
+                                "video" -> Icon(
+                                    Icons.Default.Videocam,
+                                    contentDescription = "Video",
+                                    tint = Secondary,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                                else -> Icon(
+                                    Icons.Default.Description,
+                                    contentDescription = "Document",
+                                    tint = Warning,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.width(12.dp))
+                        
+                        Text(
+                            text = when (chatViewModel.selectedMediaType) {
+                                "image" -> "Photo selected"
+                                "video" -> "Video selected"
+                                else -> "Document selected"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextPrimary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        
+                        IconButton(onClick = { chatViewModel.clearSelectedMedia() }) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Remove attachment",
+                                tint = TextSecondary
+                            )
+                        }
+                    }
+                }
+            }
+            
+            // Upload progress indicator
+            if (chatViewModel.isUploading) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Primary
+                )
+            }
+            
             // Message input
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -312,7 +432,7 @@ fun EnhancedChatScreen(
                 ) {
                     // Attachment button
                     IconButton(
-                        onClick = { /* TODO: Show attachment menu */ },
+                        onClick = { showAttachmentMenu = !showAttachmentMenu },
                         modifier = Modifier.size(40.dp)
                     ) {
                         Icon(
@@ -332,6 +452,7 @@ fun EnhancedChatScreen(
                                 text = when {
                                     chatViewModel.editingMessage != null -> "Edit message..."
                                     chatViewModel.replyToMessage != null -> "Reply..."
+                                    chatViewModel.selectedMediaUri != null -> "Add a caption..."
                                     else -> "Type a message..."
                                 },
                                 color = TextMuted
@@ -350,10 +471,9 @@ fun EnhancedChatScreen(
                     // Send button
                     IconButton(
                         onClick = {
-                            if (messageText.isNotBlank()) {
-                                chatViewModel.sendMessage(messageText)
-                                messageText = ""
-                            }
+                            chatViewModel.sendMessage(messageText, context)
+                            messageText = ""
+                            showAttachmentMenu = false
                         },
                         modifier = Modifier
                             .size(48.dp)
@@ -361,7 +481,7 @@ fun EnhancedChatScreen(
                             .background(
                                 brush = Brush.horizontalGradient(SunsetGradientColors)
                             ),
-                        enabled = messageText.isNotBlank() && !chatViewModel.isSending
+                        enabled = (messageText.isNotBlank() || chatViewModel.selectedMediaUri != null) && !chatViewModel.isSending
                     ) {
                         if (chatViewModel.isSending) {
                             CircularProgressIndicator(
@@ -420,7 +540,7 @@ fun EnhancedChatScreen(
                     selectedMessageForMenu = null
                 },
                 onDeleteForEveryone = {
-                    chatViewModel.deleteMessageForEveryone(selectedMessageForMenu!!.id)
+                    chatViewModel.deleteMessageForEveryone(selectedMessageForMenu!!.id, context)
                     showMessageMenu = false
                     selectedMessageForMenu = null
                 },
@@ -537,6 +657,65 @@ private fun EnhancedMessageBubble(
                             onQuoteClick = {}
                         )
                         Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    
+                    // Media content (image/video/document)
+                    message.mediaUrl?.let { url ->
+                        if (message.messageType != "text") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(180.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(SurfaceVariant)
+                            ) {
+                                when {
+                                    message.messageType == "image" -> {
+                                        coil.compose.AsyncImage(
+                                            model = url,
+                                            contentDescription = "Image",
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                        )
+                                    }
+                                    message.messageType == "video" -> {
+                                        Box(
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                Icons.Default.PlayCircle,
+                                                contentDescription = "Play video",
+                                                modifier = Modifier.size(64.dp),
+                                                tint = androidx.compose.ui.graphics.Color.White
+                                            )
+                                        }
+                                    }
+                                    else -> {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Description,
+                                                contentDescription = "Document",
+                                                modifier = Modifier.size(40.dp),
+                                                tint = TextSecondary
+                                            )
+                                            Text(
+                                                text = "Document",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = TextPrimary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
                     }
                     
                     // Message content

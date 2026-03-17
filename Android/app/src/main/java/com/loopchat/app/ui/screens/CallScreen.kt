@@ -48,6 +48,8 @@ import com.loopchat.app.data.DailyCallManager
 import com.loopchat.app.data.IncomingCallManager
 import com.loopchat.app.data.CallSoundManager
 import androidx.compose.ui.platform.LocalContext
+import com.loopchat.app.ui.components.DailyVideoView
+import co.daily.view.VideoView
 
 private const val TAG = "CallScreen"
 private const val CALL_TIMEOUT_MS = 30000L // 30 seconds timeout for unanswered calls
@@ -88,13 +90,19 @@ fun CallScreen(
     var callDuration by remember { mutableIntStateOf(0) }
     var callStatus by remember { mutableStateOf(if (isIncoming) "Connecting..." else "Initiating...") }
     var isConnected by remember { mutableStateOf(false) }
+    var readyToJoin by remember { mutableStateOf(false) }
+    var hasInitiatedJoin by remember { mutableStateOf(false) }
     var callId by remember { mutableStateOf<String?>(initialCallId) }
     var callEnded by remember { mutableStateOf(false) }
     var roomUrl by remember { mutableStateOf<String?>(initialRoomUrl) } // Dynamic Daily.co room URL
     var meetingToken by remember { mutableStateOf<String?>(initialCalleeToken) } // Meeting token for authenticated access
-    var roomName by remember { mutableStateOf<String?>(null) } // Room name for token requests
     var isRinging by remember { mutableStateOf(false) } // Track if call is ringing
     var callTimeoutReached by remember { mutableStateOf(false) } // Track if timeout occurred
+    var errorLogs by remember { mutableStateOf<List<String>>(emptyList()) }
+    
+    val addErrorLog = { log: String ->
+        errorLogs = errorLogs + "${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}: $log"
+    }
     
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -103,10 +111,16 @@ fun CallScreen(
     var isFrontCamera by remember { mutableStateOf(true) }
     
     // Daily.co call state
-    val dailyIsJoined by DailyCallManager.isJoined.collectAsState()
     val dailyHasRemote by DailyCallManager.hasRemoteParticipant.collectAsState()
+    val dailyLocalParticipant by DailyCallManager.localParticipant.collectAsState()
+    val dailyRemoteParticipants by DailyCallManager.remoteParticipants.collectAsState()
     val dailyCallEnded by DailyCallManager.callEnded.collectAsState()
     val dailyError by DailyCallManager.error.collectAsState()
+    
+    // Add daily error to logs if it changes
+    LaunchedEffect(dailyError) {
+        dailyError?.let { addErrorLog("Daily.co SDK Error: $it") }
+    }
     
     // Initialize Daily.co and CallSoundManager when screen loads
     LaunchedEffect(Unit) {
@@ -114,17 +128,8 @@ fun CallScreen(
         CallSoundManager.initialize(context)
     }
     
-    // Join the native Daily.co call when connected (enables camera/mic via native SDK)
-    LaunchedEffect(isConnected, roomUrl) {
-        if (isConnected && roomUrl != null) {
-            Log.d(TAG, "Joining native Daily.co call: $roomUrl, isVideo=${callType == "video"}")
-            DailyCallManager.joinCall(
-                roomUrl = roomUrl!!,
-                meetingToken = meetingToken,
-                isVideoCall = callType == "video"
-            )
-        }
-    }
+    
+    // (Removed automatic native join here to let the polling/incoming logic handle connecting strictly when accepted)
     
     // Cleanup sounds and Daily.co connection when leaving screen
     DisposableEffect(Unit) {
@@ -222,6 +227,20 @@ fun CallScreen(
         }
     }
     
+    // Join the Daily room only when both ready (DB confirmed accepted) AND permissions granted
+    LaunchedEffect(readyToJoin, cameraPermissionState.allPermissionsGranted) {
+        if (readyToJoin && cameraPermissionState.allPermissionsGranted && !hasInitiatedJoin && roomUrl != null) {
+            hasInitiatedJoin = true
+            DailyCallManager.initialize(context)
+            Log.d(TAG, "Permissions granted and ready. Joining Daily room: $roomUrl")
+            DailyCallManager.joinCall(
+                roomUrl = roomUrl!!,
+                meetingToken = meetingToken,
+                isVideoCall = callType == "video"
+            )
+        }
+    }
+    
     // Fetch callee/caller profile from database
     var otherProfile by remember { mutableStateOf<Profile?>(null) }
     var isLoadingProfile by remember { mutableStateOf(true) }
@@ -272,10 +291,10 @@ fun CallScreen(
                     Log.d(TAG, "Generated room name: $generatedRoomName")
                     
                     var createdRoomUrl: String
-                    var createdCallerToken: String? = null
-                    var createdCalleeToken: String? = null
-                    var createdRoomName: String? = generatedRoomName
-                    var edgeFunctionWorked = false
+                    var createdCallerToken: String?
+                    var createdCalleeToken: String?
+                    var createdRoomName: String?
+                    var edgeFunctionWorked: Boolean
                     
                     // Try the edge function first (requires DAILY_API_KEY configured in Supabase)
                     try {
@@ -322,11 +341,13 @@ fun CallScreen(
                         } else {
                             val errorBody = roomResponse.bodyAsText()
                             Log.e(TAG, "Edge function failed: ${roomResponse.status} - $errorBody")
+                            addErrorLog("Edge function failed: ${roomResponse.status} - $errorBody")
                             throw Exception("Edge function returned ${roomResponse.status}: $errorBody")
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "=== EDGE FUNCTION FAILED ===")
                         Log.e(TAG, "Error: ${e.message}")
+                        addErrorLog("Edge function exception: ${e.message}")
                         // Don't use static fallback — show error instead
                         callStatus = "Failed to create room: ${e.message?.take(80)}"
                         return@LaunchedEffect
@@ -378,9 +399,11 @@ fun CallScreen(
                         } else {
                             "Failed to create call (${response.status.value})"
                         }
+                        addErrorLog("Failed to create call request: $errorBody")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error creating call: ${e.message}")
+                    addErrorLog("Exception creating call: ${e.message}")
                     callStatus = "Connection error"
                 }
             } else {
@@ -425,7 +448,7 @@ fun CallScreen(
                 try {
                     Log.d(TAG, "Fetching room URL and callee token from database for call: $acceptedCallId")
                     val response = httpClient.get("${BuildConfig.SUPABASE_URL}/rest/v1/calls") {
-                        parameter("select", "id,room_url,callee_token")
+                        parameter("select", "*")
                         parameter("id", "eq.$acceptedCallId")
                         header("apikey", BuildConfig.SUPABASE_ANON_KEY)
                         header("Authorization", "Bearer $accessToken")
@@ -446,9 +469,11 @@ fun CallScreen(
                         }
                     } else {
                         Log.e(TAG, "Database fetch failed: ${response.status}")
+                        addErrorLog("Failed to fetch room from DB. Code: ${response.status}")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error fetching room URL: ${e.message}")
+                    addErrorLog("Exception fetching room from DB: ${e.message}")
                     e.printStackTrace()
                 }
             }
@@ -471,7 +496,7 @@ fun CallScreen(
             callStatus = "Verifying connection..."
             try {
                 val verifyResponse = httpClient.get("${BuildConfig.SUPABASE_URL}/rest/v1/calls") {
-                    parameter("select", "id,status")
+                    parameter("select", "*")
                     parameter("id", "eq.${acceptedCallId ?: callId}")
                     header("apikey", BuildConfig.SUPABASE_ANON_KEY)
                     header("Authorization", "Bearer $accessToken")
@@ -483,28 +508,27 @@ fun CallScreen(
                         Log.d(TAG, "=== DB CONFIRMED: Call accepted ===")
                     } else {
                         Log.w(TAG, "Call status in DB: ${verifiedCall.status}, proceeding anyway")
+                        addErrorLog("Warning: DB status is '${verifiedCall.status}', not 'accepted'")
                     }
+                } else {
+                    val errorBody = verifyResponse.bodyAsText()
+                    Log.e(TAG, "Verify response failed: ${verifyResponse.status} - $errorBody")
+                    addErrorLog("Verification failed: ${verifyResponse.status} - $errorBody")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Could not verify call status: ${e.message}, proceeding anyway")
+                addErrorLog("Status verification error: ${e.message}")
             }
             
-            // === ACTUALLY JOIN THE DAILY.CO ROOM ===
-            callStatus = "Joining room..."
-            Log.d(TAG, "=== CALLEE JOINING DAILY.CO ROOM ===")
+            // === READY TO JOIN DAILY.CO ROOM ===
+            callStatus = "Connecting..."
+            Log.d(TAG, "=== CALLEE READY TO JOIN DAILY.CO ROOM ===")
             Log.d(TAG, "Room URL: $roomUrl")
             Log.d(TAG, "Meeting token present: ${!meetingToken.isNullOrEmpty()}")
             
-            DailyCallManager.initialize(context)
-            DailyCallManager.joinCall(
-                roomUrl = roomUrl!!,
-                meetingToken = meetingToken,
-                isVideoCall = callType == "video"
-            )
-            
-            callStatus = "Connected"
+            readyToJoin = true
             isConnected = true
-            Log.d(TAG, "=== CALLEE CONNECTED ===")
+            Log.d(TAG, "=== CALLEE WAITING FOR PERMISSIONS TO CONNECT ===")
             return@LaunchedEffect
         }
         
@@ -516,7 +540,7 @@ fun CallScreen(
             
             try {
                 val response = httpClient.get("${BuildConfig.SUPABASE_URL}/rest/v1/calls") {
-                    parameter("select", "id,status,started_at")
+                    parameter("select", "*")
                     parameter("id", "eq.$currentCallId")
                     header("apikey", BuildConfig.SUPABASE_ANON_KEY)
                     header("Authorization", "Bearer $accessToken")
@@ -529,26 +553,21 @@ fun CallScreen(
                     when (call.status) {
                         "accepted" -> {
                             // Stop ringback tone
+                            Log.d(TAG, "Call accepted in DB! Connecting...")
                             CallSoundManager.stopAllSounds()
                             isRinging = false
                             callStatus = "Connecting..."
                             
-                            // === ACTUALLY JOIN THE DAILY.CO ROOM ===
-                            Log.d(TAG, "=== CALLER JOINING DAILY.CO ROOM ===")
+                            // === READY TO JOIN DAILY.CO ROOM ===
+                            Log.d(TAG, "=== CALLER READY TO JOIN DAILY.CO ROOM ===")
                             Log.d(TAG, "Room URL: $roomUrl")
                             Log.d(TAG, "Meeting token present: ${!meetingToken.isNullOrEmpty()}")
                             
-                            DailyCallManager.initialize(context)
-                            DailyCallManager.joinCall(
-                                roomUrl = roomUrl!!,
-                                meetingToken = meetingToken,
-                                isVideoCall = callType == "video"
-                            )
-                            
                             delay(500)
                             callStatus = "Connected"
+                            readyToJoin = true
                             isConnected = true
-                            Log.d(TAG, "Call accepted, caller joined Daily room!")
+                            Log.d(TAG, "Caller waiting for permissions to connect to Daily room!")
                         }
                         "rejected" -> {
                             CallSoundManager.stopAllSounds()
@@ -573,12 +592,16 @@ fun CallScreen(
                         }
                         "ringing" -> {
                             // Still ringing, continue polling
-                            callStatus = "Ringing..."
+                            // callStatus = "Ringing..."
                         }
                     }
+                } else {
+                    Log.e(TAG, "Failed to poll call status. Code: ${response.status}")
+                    addErrorLog("Polling call status failed: ${response.status}")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error polling call status: ${e.message}")
+                addErrorLog("Exception polling call status: ${e.message}")
             }
         }
     }
@@ -675,32 +698,86 @@ fun CallScreen(
                     .fillMaxSize()
                     .padding(bottom = 120.dp) // Leave space for controls at bottom
             ) {
-                // DailyCallManager handles the actual WebRTC video/audio — just show avatar UI
+                val remoteParticipant = dailyRemoteParticipants.values.firstOrNull()
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Background),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        GradientAvatar(
-                            initial = displayInitial,
-                            size = 120.dp,
-                            borderWidth = 3.dp
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = displayName,
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = if (dailyHasRemote) "In Call" else "Waiting for other user...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (dailyHasRemote) Success else TextSecondary
-                        )
+                    if (callType == "video") {
+                        // Remote Participant Video (Full Screen)
+                        if (remoteParticipant != null && remoteParticipant.media?.camera?.state == co.daily.model.MediaState.playable) {
+                            DailyVideoView(
+                                videoTrack = remoteParticipant.media?.camera?.track,
+                                modifier = Modifier.fillMaxSize(),
+                                scaleMode = VideoView.VideoScaleMode.FILL
+                            )
+                        } else if (dailyHasRemote) {
+                            // Remote connected but video off
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                GradientAvatar(initial = displayInitial, size = 120.dp, borderWidth = 3.dp)
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = "$displayName (Camera Off)",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary
+                                )
+                            }
+                        } else {
+                            // Waiting for remote
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                GradientAvatar(initial = displayInitial, size = 120.dp, borderWidth = 3.dp)
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = "Waiting for other user...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary
+                                )
+                            }
+                        }
+
+                        // Local Participant Video (Picture-in-Picture)
+                        if (dailyLocalParticipant != null && !isVideoOff && dailyLocalParticipant?.media?.camera?.state == co.daily.model.MediaState.playable) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(16.dp)
+                                    .size(100.dp, 150.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .border(2.dp, SurfaceVariant, RoundedCornerShape(12.dp))
+                                    .background(Color.Black)
+                            ) {
+                                DailyVideoView(
+                                    videoTrack = dailyLocalParticipant?.media?.camera?.track,
+                                    modifier = Modifier.fillMaxSize(),
+                                    scaleMode = VideoView.VideoScaleMode.FIT
+                                )
+                            }
+                        }
+                    } else {
+                        // Audio Call UI
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            GradientAvatar(
+                                initial = displayInitial,
+                                size = 120.dp,
+                                borderWidth = 3.dp
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = displayName,
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = if (dailyHasRemote) "In Call" else "Waiting for other user...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (dailyHasRemote) Success else TextSecondary
+                            )
+                        }
                     }
                 }
                 
@@ -874,7 +951,20 @@ fun CallScreen(
                     onClick = { 
                         isSpeakerOn = !isSpeakerOn
                         val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
-                        audioManager.isSpeakerphoneOn = isSpeakerOn
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                            if (isSpeakerOn) {
+                                val devices = audioManager.availableCommunicationDevices
+                                val speakerDevice = devices.find { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                                if (speakerDevice != null) {
+                                    audioManager.setCommunicationDevice(speakerDevice)
+                                }
+                            } else {
+                                audioManager.clearCommunicationDevice()
+                            }
+                        } else {
+                            @Suppress("DEPRECATION")
+                            audioManager.isSpeakerphoneOn = isSpeakerOn
+                        }
                     }
                 )
                 
@@ -912,6 +1002,56 @@ fun CallScreen(
                         modifier = Modifier.size(32.dp),
                         tint = TextPrimary
                     )
+                }
+            }
+        }
+        
+        // Error Logs Overlay
+        if (errorLogs.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp, vertical = 64.dp)
+                    .padding(bottom = 120.dp), // keep above call controls
+                contentAlignment = Alignment.TopCenter
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Black.copy(alpha = 0.7f))
+                        .padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Connection Logs",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        IconButton(onClick = { errorLogs = emptyList() }) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Dismiss Logs",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    errorLogs.forEach { log ->
+                        Text(
+                            text = log,
+                            color = Color(0xFFFF8A80), // Light red for errors
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
+                    }
                 }
             }
         }

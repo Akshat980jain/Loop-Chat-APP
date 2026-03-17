@@ -12,6 +12,8 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import com.loopchat.app.data.local.LoopChatDatabase
+import com.loopchat.app.data.local.entities.toEntity
 
 /**
  * Repository for Supabase REST API data operations
@@ -31,6 +33,36 @@ object SupabaseRepository {
         }
     }
 
+    // Profile cache to avoid N+1 queries when polling for new messages
+    private val profileCache = mutableMapOf<String, Profile>()
+
+    /**
+     * Get a sender profile, using cache first to avoid repeated API calls
+     */
+    private suspend fun getCachedProfile(userId: String, accessToken: String): Profile? {
+        profileCache[userId]?.let { return it }
+        val profile = fetchProfileForCache(userId, accessToken)
+        profile?.let { profileCache[userId] = it }
+        return profile
+    }
+
+    private suspend fun fetchProfileForCache(userId: String, accessToken: String): Profile? {
+        return try {
+            val profileResponse = httpClient.get("$supabaseUrl/rest/v1/profiles") {
+                parameter("select", "id,user_id,full_name,username,avatar_url")
+                parameter("user_id", "eq.$userId")
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $accessToken")
+                header("Accept", "application/vnd.pgrst.object+json")
+            }
+            if (profileResponse.status.isSuccess()) {
+                try { profileResponse.body() } catch (e: Exception) { null }
+            } else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /**
      * Fetch all conversations (no user filtering for now)
      */
@@ -40,7 +72,7 @@ object SupabaseRepository {
 
             // Get ALL conversations from the table
             val conversationsResponse = httpClient.get("$supabaseUrl/rest/v1/conversations") {
-                parameter("select", "id,updated_at")
+                parameter("select", "id,updated_at,is_group,group_id,name,avatar_url")
                 parameter("order", "updated_at.desc")
                 parameter("limit", "50")
                 header("apikey", supabaseKey)
@@ -62,12 +94,16 @@ object SupabaseRepository {
 
             // For each conversation, get participants and profile
             val conversations = allConversations.mapNotNull { conv ->
-                val participant = getAnyParticipantProfile(conv.id, userId, accessToken)
+                val participant = if (conv.is_group) null else getAnyParticipantProfile(conv.id, userId, accessToken)
                 ConversationWithParticipant(
                     id = conv.id,
                     updatedAt = conv.updated_at,
                     lastMessage = null,
-                    participant = participant
+                    participant = participant,
+                    isGroup = conv.is_group,
+                    groupId = conv.group_id,
+                    groupName = conv.name,
+                    groupAvatarUrl = conv.avatar_url
                 )
             }
 
@@ -235,7 +271,7 @@ object SupabaseRepository {
             val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
 
             val messagesResponse = httpClient.get("$supabaseUrl/rest/v1/messages") {
-                parameter("select", "id,content,conversation_id,sender_id,created_at")
+                parameter("select", "id,content,conversation_id,sender_id,created_at,media_url,message_type")
                 parameter("conversation_id", "eq.$conversationId")
                 parameter("order", "created_at.asc")
                 header("apikey", supabaseKey)
@@ -248,27 +284,109 @@ object SupabaseRepository {
 
             val messages: List<Message> = messagesResponse.body()
             
-            // Fetch sender profiles
+            // Fetch sender profiles using cache
             val messagesWithSenders = messages.map { message ->
-                val profileResponse = httpClient.get("$supabaseUrl/rest/v1/profiles") {
-                    parameter("select", "id,user_id,full_name,username,avatar_url")
-                    parameter("user_id", "eq.${message.senderId}")
-                    header("apikey", supabaseKey)
-                    header("Authorization", "Bearer $accessToken")
-                    header("Accept", "application/vnd.pgrst.object+json")
-                }
-
-                val sender: Profile? = if (profileResponse.status.isSuccess()) {
-                    try { profileResponse.body() } catch (e: Exception) { null }
-                } else null
-
+                val sender = getCachedProfile(message.senderId, accessToken)
                 MessageWithSender(
                     id = message.id,
                     content = message.content,
                     conversationId = message.conversationId,
                     senderId = message.senderId,
                     createdAt = message.createdAt,
-                    sender = sender
+                    sender = sender,
+                    mediaUrl = message.mediaUrl,
+                    messageType = message.messageType
+                )
+            }
+
+            Result.success(messagesWithSenders)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Fetch messages from remote and sync them to Room Local Database
+     */
+    suspend fun syncMessages(conversationId: String, context: android.content.Context): Result<Unit> {
+        return try {
+            val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
+
+            // Fetch all remote messages for the conversation
+            val messagesResponse = httpClient.get("$supabaseUrl/rest/v1/messages") {
+                parameter("select", "id,content,conversation_id,sender_id,created_at,media_url,message_type")
+                parameter("conversation_id", "eq.$conversationId")
+                parameter("order", "created_at.asc")
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $accessToken")
+            }
+
+            if (!messagesResponse.status.isSuccess()) {
+                return Result.failure(Exception("Failed to fetch messages"))
+            }
+
+            val messages: List<Message> = messagesResponse.body()
+            
+            // Insert into the local database
+            val db = LoopChatDatabase.getDatabase(context)
+            if (messages.isNotEmpty()) {
+                val messageEntities = messages.map { it.toEntity() }
+                db.messageDao().insertMessages(messageEntities)
+            }
+
+            // Sync profiles of senders to User table
+            val uniqueSenderIds = messages.map { it.senderId }.distinct()
+            uniqueSenderIds.forEach { senderId ->
+                val profile = getCachedProfile(senderId, accessToken)
+                profile?.let { p ->
+                    db.userDao().insertUser(p.toEntity())
+                }
+            }
+
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Fetch only new messages since a given timestamp (for efficient polling)
+     * Uses profile cache to avoid re-fetching known senders
+     */
+    suspend fun getNewMessages(conversationId: String, since: String): Result<List<MessageWithSender>> {
+        return try {
+            val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
+
+            val messagesResponse = httpClient.get("$supabaseUrl/rest/v1/messages") {
+                parameter("select", "id,content,conversation_id,sender_id,created_at,media_url,message_type")
+                parameter("conversation_id", "eq.$conversationId")
+                parameter("created_at", "gt.$since")
+                parameter("order", "created_at.asc")
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $accessToken")
+            }
+
+            if (!messagesResponse.status.isSuccess()) {
+                return Result.failure(Exception("Failed to fetch new messages"))
+            }
+
+            val messages: List<Message> = messagesResponse.body()
+            if (messages.isEmpty()) {
+                return Result.success(emptyList())
+            }
+
+            // Use cached profiles for known senders
+            val messagesWithSenders = messages.map { message ->
+                val sender = getCachedProfile(message.senderId, accessToken)
+                MessageWithSender(
+                    id = message.id,
+                    content = message.content,
+                    conversationId = message.conversationId,
+                    senderId = message.senderId,
+                    createdAt = message.createdAt,
+                    sender = sender,
+                    mediaUrl = message.mediaUrl,
+                    messageType = message.messageType
                 )
             }
 
@@ -284,7 +402,9 @@ object SupabaseRepository {
     suspend fun sendMessage(
         conversationId: String, 
         content: String, 
-        replyToMessageId: String? = null
+        replyToMessageId: String? = null,
+        mediaUrl: String? = null,
+        messageType: String = "text"
     ): Result<Message> {
         return try {
             val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
@@ -299,7 +419,9 @@ object SupabaseRepository {
                     conversation_id = conversationId,
                     sender_id = senderId,
                     content = content,
-                    reply_to_message_id = replyToMessageId
+                    reply_to_message_id = replyToMessageId,
+                    media_url = mediaUrl,
+                    message_type = messageType
                 ))
             }
 
@@ -451,6 +573,29 @@ object SupabaseRepository {
         } catch (e: Exception) {
             android.util.Log.e("SupabaseRepo", "Error getting existing conversation users: ${e.message}")
             emptySet()
+        }
+    }
+
+    suspend fun getConversation(conversationId: String): Result<ConversationBasic> {
+        return try {
+            val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
+            
+            val response = httpClient.get("$supabaseUrl/rest/v1/conversations") {
+                parameter("select", "id,updated_at,is_group,group_id,name,avatar_url")
+                parameter("id", "eq.$conversationId")
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $accessToken")
+                header("Accept", "application/vnd.pgrst.object+json")
+            }
+            
+            if (response.status.isSuccess()) {
+                val conversation: ConversationBasic = response.body()
+                Result.success(conversation)
+            } else {
+                Result.failure(Exception("Failed to fetch conversation: ${response.bodyAsText()}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
@@ -697,7 +842,7 @@ object SupabaseRepository {
     /**
      * Fetch call history for the current user
      */
-    suspend fun getCallHistory(): Result<List<CallWithProfile>> {
+    suspend fun getCallHistory(offset: Int = 0, limit: Int = 50): Result<List<CallWithProfile>> {
         return try {
             val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
             val userId = SupabaseClient.currentUserId ?: return Result.failure(Exception("No user ID"))
@@ -707,7 +852,8 @@ object SupabaseRepository {
                 parameter("select", "id,caller_id,callee_id,call_type,status,created_at,ended_at")
                 parameter("or", "(caller_id.eq.$userId,callee_id.eq.$userId)")
                 parameter("order", "created_at.desc")
-                parameter("limit", "50")
+                parameter("limit", limit.toString())
+                parameter("offset", offset.toString())
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
             }
@@ -975,7 +1121,11 @@ data class UserIdOnly(val user_id: String)
 @Serializable
 data class ConversationBasic(
     val id: String,
-    val updated_at: String? = null
+    val updated_at: String? = null,
+    val is_group: Boolean = false,
+    val group_id: String? = null,
+    val name: String? = null,
+    val avatar_url: String? = null
 )
 
 @Serializable
@@ -992,7 +1142,9 @@ data class SendMessageRequest(
     val conversation_id: String,
     val sender_id: String,
     val content: String,
-    val reply_to_message_id: String? = null
+    val reply_to_message_id: String? = null,
+    val media_url: String? = null,
+    val message_type: String = "text"
 )
 
 @Serializable
@@ -1013,7 +1165,11 @@ data class ConversationWithParticipant(
     val id: String,
     val updatedAt: String?,
     val lastMessage: String?,
-    val participant: Profile?
+    val participant: Profile?,
+    val isGroup: Boolean = false,
+    val groupId: String? = null,
+    val groupName: String? = null,
+    val groupAvatarUrl: String? = null
 )
 
 data class ContactWithProfile(
@@ -1032,6 +1188,9 @@ data class MessageWithSender(
     val senderId: String,
     val createdAt: String?,
     val sender: Profile?,
+    // Media fields
+    val mediaUrl: String? = null,
+    val messageType: String = "text",
     // New fields for enhanced messaging
     val editedAt: String? = null,
     val replyToMessageId: String? = null,

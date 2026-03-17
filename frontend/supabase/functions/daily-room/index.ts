@@ -1,11 +1,14 @@
+// @ts-ignore
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+
+declare const Deno: any;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-serve(async (req) => {
+serve(async (req: Request) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -87,6 +90,7 @@ serve(async (req) => {
       if (FCM_SERVER_KEY && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && calleeId) {
         try {
           // Fetch caller's name for the notification
+          // @ts-ignore
           const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.38.4");
           const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 

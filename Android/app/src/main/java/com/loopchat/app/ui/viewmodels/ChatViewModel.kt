@@ -60,10 +60,31 @@ class ChatViewModel : ViewModel() {
         }
     }
     
+    var currentConversation: com.loopchat.app.data.ConversationBasic? by mutableStateOf(null)
+        private set
+
     private suspend fun loadOtherParticipant(conversationId: String) {
         val currentUserId = SupabaseClient.currentUserId ?: return
         
-        // Get other participant from conversation_participants table
+        // Load the conversation basic details first
+        val convResult = SupabaseRepository.getConversation(conversationId)
+        if (convResult.isSuccess) {
+            val conv = convResult.getOrNull()
+            currentConversation = conv
+            
+            if (conv?.is_group == true) {
+                // Synthesize a Profile for the group so the UI uses its name and avatar
+                otherParticipant = Profile(
+                    id = conv.id,
+                    fullName = conv.name ?: "Unnamed Group",
+                    avatarUrl = conv.avatar_url,
+                    username = "Group"
+                )
+                return // Skip loading individual participant
+            }
+        }
+        
+        // If not a group, get other participant from conversation_participants table
         val result = SupabaseRepository.getConversationParticipants(conversationId)
         result.onSuccess { participants ->
             val otherParticipantProfile = participants.firstOrNull { 

@@ -5,10 +5,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.Context
 import android.content.Intent
+import android.annotation.SuppressLint
 import android.media.AudioAttributes
-import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.os.Build
@@ -23,16 +22,16 @@ import com.loopchat.app.IncomingCallActivity
 import com.loopchat.app.MainActivity
 import com.loopchat.app.R
 import com.loopchat.app.data.SupabaseClient
+import com.loopchat.app.data.IncomingCallManager
 import io.ktor.client.*
 import io.ktor.client.engine.android.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
+import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import com.loopchat.app.BuildConfig
@@ -74,7 +73,6 @@ class CallService : Service() {
     private var mediaPlayer: MediaPlayer? = null
     private var vibrator: Vibrator? = null
     private var wakeLock: PowerManager.WakeLock? = null
-    private var ringtoneJob: Job? = null
     
     private val httpClient = HttpClient(Android) {
         install(ContentNegotiation) {
@@ -150,6 +148,7 @@ class CallService : Service() {
         Log.d(TAG, "Accepting call: $callId")
         
         stopRingtone()
+        IncomingCallManager.markCallAsAcceptedByService()
         isCallActive = true
         
         // Update call status in database
@@ -158,8 +157,15 @@ class CallService : Service() {
         }
         
         // Update notification to show ongoing call
-        val notification = createOngoingCallNotification(callerName, callType)
-        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notification = createOngoingCallNotification(
+            callId = callId,
+            callerId = callerId,
+            callerName = callerName,
+            callType = callType,
+            roomUrl = roomUrl,
+            calleeToken = calleeToken
+        )
+        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.notify(NOTIFICATION_ID, notification)
         
         // Launch main activity with call screen
@@ -186,6 +192,7 @@ class CallService : Service() {
         Log.d(TAG, "Rejecting call: $callId")
         
         stopRingtone()
+        IncomingCallManager.clearIncomingCall()
         
         // Update call status in database
         CoroutineScope(Dispatchers.IO).launch {
@@ -218,12 +225,23 @@ class CallService : Service() {
      * Handle ongoing call - update notification for active call
      */
     private fun handleOngoingCall(intent: Intent) {
+        val callId = intent.getStringExtra(EXTRA_CALL_ID) ?: currentCallId ?: ""
+        val callerId = intent.getStringExtra(EXTRA_CALLER_ID) ?: ""
         val callerName = intent.getStringExtra(EXTRA_CALLER_NAME) ?: "Unknown"
         val callType = intent.getStringExtra(EXTRA_CALL_TYPE) ?: "audio"
+        val roomUrl = intent.getStringExtra(EXTRA_ROOM_URL) ?: ""
+        val calleeToken = intent.getStringExtra(EXTRA_CALLEE_TOKEN) ?: ""
         
         isCallActive = true
         
-        val notification = createOngoingCallNotification(callerName, callType)
+        val notification = createOngoingCallNotification(
+            callId = callId,
+            callerId = callerId,
+            callerName = callerName,
+            callType = callType,
+            roomUrl = roomUrl,
+            calleeToken = calleeToken
+        )
         startForeground(NOTIFICATION_ID, notification)
     }
     
@@ -276,7 +294,7 @@ class CallService : Service() {
         
         val callTypeText = if (callType == "video") "Video Call" else "Voice Call"
         
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("Incoming $callTypeText")
             .setContentText("$callerName is calling...")
@@ -285,18 +303,45 @@ class CallService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setAutoCancel(false)
-            .setFullScreenIntent(fullScreenPendingIntent, true)
             .addAction(android.R.drawable.ic_menu_call, "Accept", acceptPendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", rejectPendingIntent)
-            .build()
+            
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            if (notificationManager.canUseFullScreenIntent()) {
+                builder.setFullScreenIntent(fullScreenPendingIntent, true)
+            } else {
+                // Fallback if permission is denied: set as a regular content intent
+                builder.setContentIntent(fullScreenPendingIntent)
+            }
+        } else {
+            builder.setFullScreenIntent(fullScreenPendingIntent, true)
+        }
+        
+        return builder.build()
     }
     
     /**
      * Create notification for ongoing call with end call action
      */
-    private fun createOngoingCallNotification(callerName: String, callType: String): Notification {
+    private fun createOngoingCallNotification(
+        callId: String,
+        callerId: String,
+        callerName: String,
+        callType: String,
+        roomUrl: String,
+        calleeToken: String
+    ): Notification {
         val mainIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("navigate_to", "call")
+            putExtra(EXTRA_CALL_ID, callId)
+            putExtra(EXTRA_CALLER_ID, callerId)
+            putExtra(EXTRA_CALLER_NAME, callerName)
+            putExtra(EXTRA_CALL_TYPE, callType)
+            putExtra(EXTRA_ROOM_URL, roomUrl)
+            putExtra(EXTRA_CALLEE_TOKEN, calleeToken)
+            putExtra("is_incoming", true)
         }
         val mainPendingIntent = PendingIntent.getActivity(
             this, 0, mainIntent,
@@ -316,7 +361,7 @@ class CallService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("$callTypeText in progress")
-            .setContentText("Tap to return to call")
+            .setContentText("Tap to return to call with $callerName")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -330,20 +375,18 @@ class CallService : Service() {
      * Create notification channel for call service
      */
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Call Service",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Notifications for active calls"
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-                setBypassDnd(true)
-            }
-            
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Call Service",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Notifications for active calls"
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            setBypassDnd(true)
         }
+        
+        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.createNotificationChannel(channel)
     }
     
     /**
@@ -353,21 +396,16 @@ class CallService : Service() {
         try {
             // Vibration
             vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                val vibratorManager = getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager
                 vibratorManager.defaultVibrator
             } else {
                 @Suppress("DEPRECATION")
-                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                getSystemService(VIBRATOR_SERVICE) as Vibrator
             }
             
             vibrator?.let {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val pattern = longArrayOf(0, 1000, 500, 1000, 500)
-                    it.vibrate(VibrationEffect.createWaveform(pattern, 0))
-                } else {
-                    @Suppress("DEPRECATION")
-                    it.vibrate(longArrayOf(0, 1000, 500, 1000, 500), 0)
-                }
+                val pattern = longArrayOf(0, 1000, 500, 1000, 500)
+                it.vibrate(VibrationEffect.createWaveform(pattern, 0))
             }
             
             // Ringtone
@@ -414,7 +452,7 @@ class CallService : Service() {
      */
     private fun acquireWakeLock() {
         try {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val powerManager = getSystemService(POWER_SERVICE) as PowerManager
             wakeLock = powerManager.newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK,
                 "LoopChat:CallWakeLock"
@@ -447,18 +485,23 @@ class CallService : Service() {
         val accessToken = SupabaseClient.getAccessToken() ?: return
         
         try {
-            httpClient.request("${BuildConfig.SUPABASE_URL}/rest/v1/calls") {
+            val response = httpClient.request("${BuildConfig.SUPABASE_URL}/rest/v1/calls") {
                 method = HttpMethod.Patch
                 contentType(ContentType.Application.Json)
                 parameter("id", "eq.$callId")
                 header("apikey", BuildConfig.SUPABASE_ANON_KEY)
                 header("Authorization", "Bearer $accessToken")
+                header("Prefer", "return=minimal")
                 setBody(mapOf(
                     "status" to "accepted",
                     "started_at" to java.time.Instant.now().toString()
                 ))
             }
-            Log.d(TAG, "Call accepted in database")
+            if (response.status.isSuccess()) {
+                Log.d(TAG, "Call accepted in database successfully")
+            } else {
+                Log.e(TAG, "Failed to accept call in DB: ${response.status} - ${response.bodyAsText()}")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error accepting call in database: ${e.message}")
         }
@@ -471,18 +514,23 @@ class CallService : Service() {
         val accessToken = SupabaseClient.getAccessToken() ?: return
         
         try {
-            httpClient.request("${BuildConfig.SUPABASE_URL}/rest/v1/calls") {
+            val response = httpClient.request("${BuildConfig.SUPABASE_URL}/rest/v1/calls") {
                 method = HttpMethod.Patch
                 contentType(ContentType.Application.Json)
                 parameter("id", "eq.$callId")
                 header("apikey", BuildConfig.SUPABASE_ANON_KEY)
                 header("Authorization", "Bearer $accessToken")
+                header("Prefer", "return=minimal")
                 setBody(mapOf(
                     "status" to "rejected",
                     "ended_at" to java.time.Instant.now().toString()
                 ))
             }
-            Log.d(TAG, "Call rejected in database")
+            if (response.status.isSuccess()) {
+                Log.d(TAG, "Call rejected in database successfully")
+            } else {
+                Log.e(TAG, "Failed to reject call in DB: ${response.status} - ${response.bodyAsText()}")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error rejecting call in database: ${e.message}")
         }
@@ -495,18 +543,23 @@ class CallService : Service() {
         val accessToken = SupabaseClient.getAccessToken() ?: return
         
         try {
-            httpClient.request("${BuildConfig.SUPABASE_URL}/rest/v1/calls") {
+            val response = httpClient.request("${BuildConfig.SUPABASE_URL}/rest/v1/calls") {
                 method = HttpMethod.Patch
                 contentType(ContentType.Application.Json)
                 parameter("id", "eq.$callId")
                 header("apikey", BuildConfig.SUPABASE_ANON_KEY)
                 header("Authorization", "Bearer $accessToken")
+                header("Prefer", "return=minimal")
                 setBody(mapOf(
                     "status" to "ended",
                     "ended_at" to java.time.Instant.now().toString()
                 ))
             }
-            Log.d(TAG, "Call ended in database")
+            if (response.status.isSuccess()) {
+                Log.d(TAG, "Call ended in database successfully")
+            } else {
+                Log.e(TAG, "Failed to end call in DB: ${response.status} - ${response.bodyAsText()}")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error ending call in database: ${e.message}")
         }
