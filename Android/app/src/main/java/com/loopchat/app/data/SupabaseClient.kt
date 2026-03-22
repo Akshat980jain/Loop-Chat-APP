@@ -345,6 +345,38 @@ object SupabaseClient {
             // Non-critical: don't fail the login if session tracking fails
             android.util.Log.e("SupabaseClient", "Error tracking session: ${e.message}")
         }
+        
+        // Also upload E2EE Public Key upon valid session initialization
+        uploadPublicKey()
+    }
+    
+    /**
+     * Upload the user's RSA Public Key to Supabase for E2EE
+     */
+    private suspend fun uploadPublicKey() {
+        val token = accessToken ?: return
+        val userId = currentUserId ?: return
+        try {
+            val base64PublicKey = com.loopchat.app.data.crypto.CryptoManager.getMyPublicKeyBase64() ?: return
+            
+            val payload = mapOf(
+                "user_id" to userId,
+                "public_key" to base64PublicKey,
+                "updated_at" to "now()"
+            )
+
+            // Upsert mechanism: On conflict update public_key
+            httpClient.post("$supabaseUrl/rest/v1/user_public_keys") {
+                contentType(ContentType.Application.Json)
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $token")
+                header("Prefer", "resolution=merge-duplicates")
+                setBody(payload)
+            }
+            android.util.Log.d("SupabaseClient", "Public key uploaded successfully")
+        } catch (e: Exception) {
+            android.util.Log.e("SupabaseClient", "Error uploading public key: ${e.message}")
+        }
     }
     
     /**

@@ -68,7 +68,13 @@ data class Message(
     @SerialName("deleted_for_everyone")
     val deletedForEveryone: Boolean? = null,
     @SerialName("deleted_at")
-    val deletedAt: String? = null
+    val deletedAt: String? = null,
+    @SerialName("media_duration")
+    val mediaDuration: Long? = null,
+    @SerialName("waveform_data")
+    val waveformData: kotlinx.serialization.json.JsonElement? = null,
+    @SerialName("expires_at")
+    val expiresAt: String? = null
 )
 
 @Serializable

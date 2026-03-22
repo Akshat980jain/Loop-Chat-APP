@@ -202,7 +202,7 @@ fun IncomingCallScreen(
                         modifier = Modifier
                             .size(72.dp)
                             .clip(CircleShape)
-                            .background(Error),
+                            .background(ErrorColor),
                         contentAlignment = Alignment.Center
                     ) {
                         IconButton(

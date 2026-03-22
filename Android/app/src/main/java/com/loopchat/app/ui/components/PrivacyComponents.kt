@@ -531,7 +531,7 @@ fun ConversationActionMenu(
             MenuActionItem(
                 icon = Icons.Default.Delete,
                 text = "Delete Chat",
-                textColor = Error,
+                textColor = ErrorColor,
                 onClick = {
                     onDelete()
                     onDismiss()

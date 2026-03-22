@@ -262,27 +262,60 @@ object MediaUploadManager {
     }
     
     /**
-     * Compress image before upload
+     * Compress image before upload (optimized)
      */
     suspend fun compressImage(
         context: Context,
         imageUri: Uri,
-        quality: Int = 80
+        quality: Int = 80,
+        maxWidth: Int = 1920,
+        maxHeight: Int = 1920
     ): Result<Uri> = withContext(Dispatchers.IO) {
         try {
-            val bitmap = MediaStore.Images.Media.getBitmap(context.contentResolver, imageUri)
+            // 1. Decode bounds
+            val options = android.graphics.BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            context.contentResolver.openInputStream(imageUri)?.use {
+                android.graphics.BitmapFactory.decodeStream(it, null, options)
+            }
             
-            // Create temp file
+            // 2. Calculate inSampleSize
+            options.inSampleSize = calculateInSampleSize(options, maxWidth, maxHeight)
+            options.inJustDecodeBounds = false
+            
+            // 3. Decode scaled bitmap
+            val bitmap = context.contentResolver.openInputStream(imageUri)?.use {
+                android.graphics.BitmapFactory.decodeStream(it, null, options)
+            } ?: return@withContext Result.failure(Exception("Failed to decode image"))
+            
+            // 4. Compress to file
             val tempFile = File(context.cacheDir, "compressed_${UUID.randomUUID()}.jpg")
             FileOutputStream(tempFile).use { out ->
                 bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, out)
             }
+            
+            bitmap.recycle() // Free memory
             
             Result.success(Uri.fromFile(tempFile))
         } catch (e: Exception) {
             Log.e("MediaUpload", "Compression failed", e)
             Result.failure(e)
         }
+    }
+    
+    private fun calculateInSampleSize(options: android.graphics.BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val (height: Int, width: Int) = options.outHeight to options.outWidth
+        var inSampleSize = 1
+
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight: Int = height / 2
+            val halfWidth: Int = width / 2
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
     }
     
     /**

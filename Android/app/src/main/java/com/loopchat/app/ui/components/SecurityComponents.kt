@@ -333,7 +333,7 @@ private fun DeviceItem(
                     Icon(
                         Icons.Default.Delete,
                         contentDescription = "Remove device",
-                        tint = Error
+                        tint = ErrorColor
                     )
                 }
             }
@@ -352,7 +352,7 @@ private fun DeviceItem(
                         showRemoveDialog = false
                     }
                 ) {
-                    Text("Remove", color = Error)
+                    Text("Remove", color = ErrorColor)
                 }
             },
             dismissButton = {

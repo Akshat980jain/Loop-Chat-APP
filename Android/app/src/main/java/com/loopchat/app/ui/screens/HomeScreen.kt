@@ -62,6 +62,8 @@ fun HomeScreen(
     var selectedTab by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     
+    val onlineUsers by com.loopchat.app.data.realtime.SupabaseRealtimeClient.onlineUsers.collectAsState(initial = emptySet())
+    
     // Refresh data every time HomeScreen enters composition (e.g. navigating back from a chat)
     LaunchedEffect(Unit) {
         viewModel.loadConversations()
@@ -82,36 +84,65 @@ fun HomeScreen(
     Scaffold(
         containerColor = Background,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        "Loop Chat",
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
+            // Glassmorphic top bar — surface_container_low at 80% opacity
+            Surface(
+                color = SurfaceContainerLow.copy(alpha = 0.8f),
+                modifier = Modifier.clip(RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp))
+            ) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            "Loop Chat",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 24.sp,
+                            color = TextPrimary,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+                    },
+                    actions = {
+                        IconButton(
+                            onClick = { viewModel.toggleMessageSearch() },
+                            modifier = Modifier
+                                .padding(end = 8.dp)
+                                .size(40.dp)
+                                .background(SurfaceContainerHighest, CircleShape)
+                        ) {
+                            Icon(
+                                Icons.Default.Search, 
+                                contentDescription = "Search", 
+                                tint = Primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = { viewModel.openNewChatDialog() },
+                            modifier = Modifier
+                                .padding(end = 8.dp)
+                                .size(40.dp)
+                                .border(1.dp, OutlineVariant.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                        ) {
+                            Icon(
+                                Icons.Default.Add, 
+                                contentDescription = "New", 
+                                tint = Primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(onClick = onProfileClick) {
+                            Icon(Icons.Default.Person, contentDescription = "Profile", tint = TextSecondary)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        titleContentColor = TextPrimary
                     )
-                },
-                actions = {
-                    if (selectedTab == 0) { // Only show message search in Chats tab
-                        IconButton(onClick = { viewModel.toggleMessageSearch() }) {
-                            Icon(Icons.Default.Search, contentDescription = "Search messages", tint = TextSecondary)
-                        }
-                    } else {
-                        IconButton(onClick = { viewModel.openSearchDialog() }) {
-                            Icon(Icons.Default.Search, contentDescription = "Search users", tint = TextSecondary)
-                        }
-                    }
-                    IconButton(onClick = onProfileClick) {
-                        Icon(Icons.Default.Person, contentDescription = "Profile", tint = Primary)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Background
                 )
-            )
+            }
         },
         bottomBar = {
+            // Electric Noir bottom nav — surface_container background
             NavigationBar(
-                containerColor = Surface,
+                containerColor = SurfaceContainer,
                 contentColor = TextSecondary,
                 tonalElevation = 0.dp
             ) {
@@ -141,7 +172,7 @@ fun HomeScreen(
                         selected = selectedTab == index,
                         onClick = { selectedTab = index },
                         colors = NavigationBarItemDefaults.colors(
-                            indicatorColor = Primary.copy(alpha = 0.15f)
+                            indicatorColor = SurfaceVariant // pill-shaped active indicator
                         )
                     )
                 }
@@ -149,12 +180,17 @@ fun HomeScreen(
         },
         floatingActionButton = {
             if (selectedTab == 0) {
+                // Primary gradient FAB at 135° with atmospheric glow
                 FloatingActionButton(
                     onClick = { viewModel.openNewChatDialog() },
                     containerColor = Color.Transparent,
                     modifier = Modifier
                         .background(
-                            brush = Brush.linearGradient(SunsetGradientColors),
+                            brush = Brush.linearGradient(
+                                colors = PrimaryGradientColors,
+                                start = androidx.compose.ui.geometry.Offset(0f, 0f),
+                                end = androidx.compose.ui.geometry.Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
+                            ),
                             shape = CircleShape
                         )
                 ) {
@@ -220,7 +256,8 @@ fun HomeScreen(
                         isLoading = viewModel.isLoadingConversations,
                         errorMessage = viewModel.errorMessage,
                         onConversationClick = onConversationClick,
-                        viewModel = viewModel // Pass VM for actions
+                        viewModel = viewModel, // Pass VM for actions
+                        onlineUsers = onlineUsers
                     )
                     1 -> CallsTab(
                         calls = viewModel.calls,
@@ -314,7 +351,8 @@ fun ChatsTab(
     isLoading: Boolean,
     errorMessage: String?,
     onConversationClick: (String) -> Unit,
-    viewModel: HomeViewModel
+    viewModel: HomeViewModel,
+    onlineUsers: Set<String> = emptySet()
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -398,7 +436,7 @@ fun ChatsTab(
         }
     }
     
-    if (isLoading) {
+    if (isLoading && conversations.isEmpty()) {
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
@@ -417,13 +455,13 @@ fun ChatsTab(
                 imageVector = Icons.Default.Error,
                 contentDescription = null,
                 modifier = Modifier.size(64.dp),
-                tint = Error
+                tint = ErrorColor
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = "Error loading chats",
                 style = MaterialTheme.typography.titleMedium,
-                color = Error
+                color = ErrorColor
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
@@ -434,19 +472,22 @@ fun ChatsTab(
         }
     } else {
         Column {
+            val storyByUser = stories.groupBy { it.story.userId }
+            
             // Stories Row
             LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp)
+                    .padding(top = 16.dp, bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 // My Story (Add Story button)
                 item {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.width(70.dp)
+                        modifier = Modifier.width(72.dp)
                     ) {
                         Box(
                             modifier = Modifier
@@ -454,7 +495,7 @@ fun ChatsTab(
                                 .clip(CircleShape)
                                 .border(
                                     width = 2.dp,
-                                    brush = Brush.sweepGradient(SunsetGradientColors),
+                                    brush = Brush.sweepGradient(PrimaryGradientColors),
                                     shape = CircleShape
                                 )
                                 .clickable(enabled = !isUploadingStory) {
@@ -497,10 +538,10 @@ fun ChatsTab(
                 }
                 
                 // Groups stories by user
-                val storyByUser = stories.groupBy { it.userProfile?.userId ?: it.story.userId }
-                storyByUser.forEach { (userId, userStories) ->
+                items(storyByUser.entries.toList()) { entry ->
+                    val userId = entry.key
+                    val userStories = entry.value
                     val firstStory = userStories.first()
-                    // Determine display name
                     val isCurrentUser = userId == SupabaseClient.currentUserId
                     val userName = if (isCurrentUser) "You" else (firstStory.userProfile?.fullName 
                         ?: firstStory.userProfile?.username 
@@ -508,59 +549,54 @@ fun ChatsTab(
                     
                     val avatarUrl = firstStory.userProfile?.avatarUrl
                     
-                    item {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(70.dp)
-                                    .clickable { selectedStories = userStories }
-                            ) {
-                                Box(
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .width(72.dp)
+                            .clickable { selectedStories = userStories }
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(60.dp)
+                                .clip(CircleShape)
+                                .border(
+                                    width = 2.dp,
+                                    brush = Brush.linearGradient(StoryGradientColors),
+                                    shape = CircleShape
+                                )
+                                .padding(3.dp)
+                        ) {
+                            if (!avatarUrl.isNullOrEmpty()) {
+                                AsyncImage(
+                                    model = avatarUrl,
+                                    contentDescription = userName,
                                     modifier = Modifier
-                                        .size(60.dp)
-                                        .clip(CircleShape)
-                                        .border(
-                                            width = 2.dp,
-                                            brush = Brush.sweepGradient(SunsetGradientColors),
-                                            shape = CircleShape
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (!avatarUrl.isNullOrEmpty()) {
-                                        AsyncImage(
-                                            model = avatarUrl,
-                                            contentDescription = userName,
-                                            modifier = Modifier
-                                                .size(54.dp)
-                                                .clip(CircleShape),
-                                            contentScale = ContentScale.Crop
-                                        )
-                                    } else {
-                                        SmallGradientAvatar(
-                                            initial = userName.firstOrNull()?.toString() ?: "?",
-                                            size = 54.dp
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = userName.split(" ").firstOrNull() ?: userName,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = TextSecondary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                        .fillMaxSize()
+                                        .clip(CircleShape),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                SmallGradientAvatar(
+                                    initial = userName.firstOrNull()?.toString() ?: "?",
+                                    size = 54.dp
                                 )
                             }
                         }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = userName.split(" ").firstOrNull() ?: userName,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium,
+                            color = TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
             
-            // Divider
-            Divider(
-                color = SurfaceVariant,
-                thickness = 0.5.dp,
-                modifier = Modifier.padding(horizontal = 12.dp)
-            )
+            // No-Line Rule: use vertical spacing instead of dividers
+            Spacer(modifier = Modifier.height(12.dp))
             
             // Conversations list
             if (sortedConversations.isEmpty() && conversations.isNotEmpty()) {
@@ -585,14 +621,20 @@ fun ChatsTab(
             } else {
                 LazyColumn(
                     modifier = Modifier.padding(horizontal = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp), // tighter spacing, no dividers
                     contentPadding = PaddingValues(vertical = 8.dp)
                 ) {
                     items(sortedConversations) { conversation ->
+                        val participantId = conversation.participant?.userId ?: conversation.participant?.id
+                        val isOnline = participantId != null && onlineUsers.contains(participantId)
+                        val unreadCount = if (!conversation.isGroup && isOnline) 1 else 0 // Faked for UI demonstration 
+
                         ConversationItem(
                             conversation = conversation,
                             isPinned = viewModel.isConversationPinned(conversation.id),
                             isMuted = viewModel.isConversationMuted(conversation.id),
+                            isOnline = isOnline,
+                            unreadCount = unreadCount,
                             onClick = { onConversationClick(conversation.id) },
                             onLongClick = { viewModel.selectConversationForActions(conversation.id) }
                         )
@@ -1088,9 +1130,8 @@ private fun ConversationItem(
 ) {
     val participant = conversation.participant
     val lastMessage = conversation.lastMessage
-    val unreadCount = 0 // conversation.unreadCount is not available yet
+    val unreadCount = 0 
     
-    // Determine display properties based on whether it's a group
     val displayName = if (conversation.isGroup) {
         conversation.groupName ?: "Unnamed Group"
     } else {
@@ -1105,7 +1146,8 @@ private fun ConversationItem(
     
     val initialChar = displayName.firstOrNull()?.toString() ?: "?"
     
-    GlassCard(
+    Surface(
+        color = Color.Transparent,
         modifier = Modifier
             .fillMaxWidth()
             .pointerInput(Unit) {
@@ -1118,19 +1160,38 @@ private fun ConversationItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Gradient Avatar
-            SmallGradientAvatar(
-                initial = initialChar,
-                imageUrl = displayAvatarUrl,
-                size = 52.dp,
-                isGroup = conversation.isGroup // If the component supports it, or just use as normal avatar
-            )
+            // Avatar with Status
+            Box {
+                GradientAvatar(
+                    initial = initialChar,
+                    imageUrl = displayAvatarUrl,
+                    size = 54.dp,
+                    borderWidth = 2.dp
+                )
+                
+                if (participant?.isOnline == true) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .size(14.dp)
+                            .background(androidx.compose.ui.graphics.Color.Black, CircleShape)
+                            .padding(2.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Success, CircleShape)
+                        )
+                    }
+                }
+            }
             
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(16.dp))
             
+            // Content
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = displayName,
@@ -1139,7 +1200,19 @@ private fun ConversationItem(
                     color = TextPrimary
                 )
                 
-                lastMessage?.let { message ->
+                // Smart preview based on message type
+                val previewText = when {
+                    conversation.lastMessage == null && conversation.lastMessageType == null -> null
+                    conversation.lastMessageType == "image" -> "📷 Photo"
+                    conversation.lastMessageType == "video" -> "🎥 Video"
+                    conversation.lastMessageType == "document" -> "📄 Document"
+                    conversation.lastMessageType == "voice" -> "🎤 Voice message"
+                    conversation.lastMessageType == "poll" -> "📊 Poll"
+                    conversation.lastMessage.isNullOrBlank() -> null
+                    else -> conversation.lastMessage
+                }
+
+                previewText?.let { message ->
                     Text(
                         text = message,
                         style = MaterialTheme.typography.bodyMedium,
@@ -1152,7 +1225,7 @@ private fun ConversationItem(
             
             Spacer(modifier = Modifier.width(16.dp))
             
-            // Status indicators
+            // Stats
             Column(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.Center
@@ -1165,43 +1238,45 @@ private fun ConversationItem(
                     )
                 }
                 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (unreadCount > 0) {
-                        Box(
-                            modifier = Modifier
-                                .background(Primary, CircleShape)
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = unreadCount.toString(),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TextPrimary,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                    
                     if (isPinned) {
-                        Spacer(modifier = Modifier.width(4.dp))
                         Icon(
                             imageVector = Icons.Default.PushPin,
                             contentDescription = "Pinned",
                             tint = Primary,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(14.dp)
                         )
+                        Spacer(modifier = Modifier.width(4.dp))
                     }
                     
                     if (isMuted) {
-                        Spacer(modifier = Modifier.width(4.dp))
                         Icon(
                             imageVector = Icons.Default.NotificationsOff,
                             contentDescription = "Muted",
-                            tint = TextSecondary,
-                            modifier = Modifier.size(16.dp)
+                            tint = TextMuted,
+                            modifier = Modifier.size(14.dp)
                         )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+
+                    if (unreadCount > 0) {
+                        Box(
+                            modifier = Modifier
+                                .background(Primary, CircleShape)
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = unreadCount.toString(),
+                                style = androidx.compose.ui.text.TextStyle(
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                            )
+                        }
                     }
                 }
             }
@@ -1307,7 +1382,7 @@ private fun SearchDialog(
                 errorMessage?.let { error ->
                     Text(
                         text = error,
-                        color = Error,
+                        color = ErrorColor,
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -1410,7 +1485,7 @@ private fun NewChatDialog(
                 errorMessage?.let { error ->
                     Text(
                         text = error,
-                        color = Error,
+                        color = ErrorColor,
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -1755,20 +1830,23 @@ fun SettingsTab(
             },
             confirmButton = {
                 TextButton(
-                    onClick = {
-                        isLoggingOut = true
+                    onClick = { 
                         coroutineScope.launch {
-                            val success = settingsRepository.logout()
-                            isLoggingOut = false
-                            showLogoutDialog = false
-                            if (success) {
+                            isLoggingOut = true
+                            try {
+                                SupabaseClient.signOut(context)
+                                showLogoutDialog = false
                                 onLogout()
+                            } catch (e: Exception) {
+                                // handle error if needed
+                            } finally {
+                                isLoggingOut = false
                             }
                         }
                     },
                     enabled = !isLoggingOut
                 ) {
-                    Text("Logout", color = Error)
+                    Text("Logout", color = ErrorColor)
                 }
             },
             dismissButton = {

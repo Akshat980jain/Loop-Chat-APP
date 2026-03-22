@@ -85,7 +85,7 @@ class HomeViewModel : ViewModel() {
     var selectedConversationForActions by mutableStateOf<String?>(null)
         private set
     
-    fun loadConversations() {
+    fun loadConversations(isRefresh: Boolean = false) {
         val userId = SupabaseClient.currentUserId
         
         if (userId == null) {
@@ -95,7 +95,7 @@ class HomeViewModel : ViewModel() {
         }
         
         viewModelScope.launch {
-            isLoadingConversations = true
+            if (!isRefresh) isLoadingConversations = true
             errorMessage = null
             
             try {
@@ -110,15 +110,15 @@ class HomeViewModel : ViewModel() {
                 errorMessage = "Exception: ${e.message}"
             }
             
-            isLoadingConversations = false
+            if (!isRefresh) isLoadingConversations = false
         }
     }
     
-    fun loadContacts() {
+    fun loadContacts(isRefresh: Boolean = false) {
         val userId = SupabaseClient.currentUserId ?: return
         
         viewModelScope.launch {
-            isLoadingContacts = true
+            if (!isRefresh) isLoadingContacts = true
             
             val result = SupabaseRepository.getContacts(userId)
             result.onSuccess { contactList ->
@@ -127,7 +127,7 @@ class HomeViewModel : ViewModel() {
                 errorMessage = e.message
             }
             
-            isLoadingContacts = false
+            if (!isRefresh) isLoadingContacts = false
         }
     }
     
@@ -138,9 +138,9 @@ class HomeViewModel : ViewModel() {
     var isLoadingMoreCalls by mutableStateOf(false)
         private set
 
-    fun loadCalls() {
+    fun loadCalls(isRefresh: Boolean = false) {
         viewModelScope.launch {
-            isLoadingCalls = true
+            if (!isRefresh) isLoadingCalls = true
             callsOffset = 0
             hasMoreCalls = true
             
@@ -153,7 +153,7 @@ class HomeViewModel : ViewModel() {
                 // Don't set error for calls tab
             }
             
-            isLoadingCalls = false
+            if (!isRefresh) isLoadingCalls = false
         }
     }
 
@@ -254,9 +254,9 @@ class HomeViewModel : ViewModel() {
     }
     
     fun refresh() {
-        loadConversations()
-        loadContacts()
-        loadCalls()
+        loadConversations(isRefresh = true)
+        loadContacts(isRefresh = true)
+        loadCalls(isRefresh = true)
         loadPhase2Data()
     }
     
@@ -436,8 +436,8 @@ class HomeViewModel : ViewModel() {
         pollingJob = viewModelScope.launch {
             while (isActive) {
                 delay(10_000) // Poll every 10 seconds
-                loadConversations()
-                loadCalls()
+                loadConversations(isRefresh = true)
+                loadCalls(isRefresh = true)
             }
         }
     }

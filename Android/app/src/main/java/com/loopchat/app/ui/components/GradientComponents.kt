@@ -23,16 +23,18 @@ import androidx.compose.ui.unit.sp
 import com.loopchat.app.ui.theme.*
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.People
 
 /**
- * Premium Gradient Button with Sunset Vibes colors
+ * Premium Gradient Button with Electric Noir primary gradient
  */
 @Composable
 fun GradientButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    gradientColors: List<Color> = SunsetGradientColors,
+    gradientColors: List<Color> = PrimaryGradientColors,
     content: @Composable RowScope.() -> Unit
 ) {
     Button(
@@ -74,8 +76,8 @@ fun GradientButtonLarge(
             .height(56.dp)
             .background(
                 brush = Brush.horizontalGradient(
-                    colors = if (enabled && !isLoading) SunsetGradientColors 
-                            else SunsetGradientColors.map { it.copy(alpha = 0.5f) }
+                    colors = if (enabled && !isLoading) PrimaryGradientColors 
+                        else PrimaryGradientColors.map { it.copy(alpha = 0.5f) }
                 ),
                 shape = RoundedCornerShape(14.dp)
             )
@@ -112,7 +114,8 @@ fun GradientButtonLarge(
 }
 
 /**
- * Glassmorphism Card with subtle blur and border
+ * Electric Noir Glassmorphism Card
+ * Uses surface_container + ghost border (outline_variant at 15%)
  */
 @Composable
 fun GlassCard(
@@ -124,19 +127,14 @@ fun GlassCard(
         modifier = modifier
             .border(
                 width = 1.dp,
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        Primary.copy(alpha = 0.3f),
-                        Secondary.copy(alpha = 0.2f)
-                    )
-                ),
+                color = OutlineVariant.copy(alpha = 0.15f), // Ghost Border
                 shape = shape
             ),
         shape = shape,
         colors = CardDefaults.cardColors(
-            containerColor = GlassBackground
+            containerColor = SurfaceContainer
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp) // No shadows in dark mode
     ) {
         content()
     }
@@ -176,7 +174,7 @@ fun GradientAvatar(
             modifier = Modifier
                 .size(size)
                 .clip(CircleShape)
-                .background(Surface),
+                .background(SurfaceContainer),
             contentAlignment = Alignment.Center
         ) {
             if (!imageUrl.isNullOrBlank()) {
@@ -231,7 +229,7 @@ fun SmallGradientAvatar(
             )
             .padding(2.dp)
             .clip(CircleShape)
-            .background(Surface),
+            .background(SurfaceContainer),
         contentAlignment = Alignment.Center
     ) {
         if (!imageUrl.isNullOrBlank()) {
@@ -240,6 +238,13 @@ fun SmallGradientAvatar(
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
+            )
+        } else if (isGroup) {
+            Icon(
+                imageVector = androidx.compose.material.icons.Icons.Default.People,
+                contentDescription = "Group",
+                tint = Primary,
+                modifier = Modifier.size(size * 0.5f)
             )
         } else {
             Text(
@@ -253,7 +258,7 @@ fun SmallGradientAvatar(
 }
 
 /**
- * Glowing icon with sunset colors
+ * Glowing icon with Electric Noir primary glow
  */
 @Composable
 fun GlowingLogo(
@@ -285,14 +290,14 @@ fun GlowingLogo(
         Surface(
             modifier = Modifier.size(size * 0.85f),
             shape = RoundedCornerShape(20.dp),
-            color = Surface.copy(alpha = 0.9f)
+            color = SurfaceContainer.copy(alpha = 0.9f)
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .border(
                         width = 2.dp,
-                        brush = Brush.linearGradient(SunsetGradientColors),
+                        brush = Brush.linearGradient(PrimaryGradientColors),
                         shape = RoundedCornerShape(20.dp)
                     ),
                 contentAlignment = Alignment.Center

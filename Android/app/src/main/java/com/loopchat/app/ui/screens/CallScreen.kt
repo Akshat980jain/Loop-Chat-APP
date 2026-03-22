@@ -3,6 +3,7 @@ package com.loopchat.app.ui.screens
 import android.media.AudioManager
 import android.util.Log
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -14,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -50,6 +52,7 @@ import com.loopchat.app.data.CallSoundManager
 import androidx.compose.ui.platform.LocalContext
 import com.loopchat.app.ui.components.DailyVideoView
 import co.daily.view.VideoView
+import androidx.camera.lifecycle.ProcessCameraProvider
 
 private const val TAG = "CallScreen"
 private const val CALL_TIMEOUT_MS = 30000L // 30 seconds timeout for unanswered calls
@@ -84,8 +87,10 @@ fun CallScreen(
     initialCalleeToken: String? = null,
     onEndCall: () -> Unit
 ) {
-    var isMuted by remember { mutableStateOf(false) }
-    var isVideoOff by remember { mutableStateOf(callType == "audio") }
+    // Mute and video state — read from DailyCallManager as single source of truth
+    val isMuted by DailyCallManager.isMuted.collectAsState()
+    val dailyVideoEnabled by DailyCallManager.isVideoEnabled.collectAsState()
+    val isVideoOff = !dailyVideoEnabled || callType == "audio"
     var isSpeakerOn by remember { mutableStateOf(true) }
     var callDuration by remember { mutableIntStateOf(0) }
     var callStatus by remember { mutableStateOf(if (isIncoming) "Connecting..." else "Initiating...") }
@@ -119,7 +124,23 @@ fun CallScreen(
     
     // Add daily error to logs if it changes
     LaunchedEffect(dailyError) {
-        dailyError?.let { addErrorLog("Daily.co SDK Error: $it") }
+        dailyError?.let { 
+            addErrorLog("Daily.co SDK Error: $it") 
+            callStatus = "Error connecting media"
+        }
+    }
+    
+    // Sync UI with Daily.co native state
+    val dailyCallState by DailyCallManager.callState.collectAsState()
+    LaunchedEffect(dailyCallState) {
+        when (dailyCallState) {
+            co.daily.model.CallState.joining -> callStatus = "Connecting to media..."
+            co.daily.model.CallState.joined -> {
+                callStatus = "Connected"
+                isConnected = true
+            }
+            else -> {}
+        }
     }
     
     // Initialize Daily.co and CallSoundManager when screen loads
@@ -137,6 +158,15 @@ fun CallScreen(
             CallSoundManager.stopAllSounds()
             // Full cleanup resets ALL state so next call starts fresh
             DailyCallManager.cleanup()
+            // Restore audio routing to normal
+            val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+            audioManager.mode = AudioManager.MODE_NORMAL
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                audioManager.clearCommunicationDevice()
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.isSpeakerphoneOn = false
+            }
         }
     }
     
@@ -231,6 +261,16 @@ fun CallScreen(
     LaunchedEffect(readyToJoin, cameraPermissionState.allPermissionsGranted) {
         if (readyToJoin && cameraPermissionState.allPermissionsGranted && !hasInitiatedJoin && roomUrl != null) {
             hasInitiatedJoin = true
+            // Force-release CameraX so Daily.co SDK can access the camera hardware
+            try {
+                val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+                val provider = cameraProviderFuture.get()
+                provider.unbindAll()
+                Log.d(TAG, "CameraX released before Daily.co join")
+            } catch (e: Exception) {
+                Log.w(TAG, "CameraX release failed: ${e.message}")
+            }
+            delay(300) // Brief delay for hardware handoff
             DailyCallManager.initialize(context)
             Log.d(TAG, "Permissions granted and ready. Joining Daily room: $roomUrl")
             DailyCallManager.joinCall(
@@ -241,8 +281,9 @@ fun CallScreen(
         }
     }
     
-    // Fetch callee/caller profile from database
+    // Fetch profiles from database
     var otherProfile by remember { mutableStateOf<Profile?>(null) }
+    var ownProfile by remember { mutableStateOf<Profile?>(null) }
     var isLoadingProfile by remember { mutableStateOf(true) }
     
     // Load other user's profile
@@ -254,6 +295,17 @@ fun CallScreen(
                 otherProfile = profile
             }
             isLoadingProfile = false
+        }
+    }
+    
+    // Load own profile to send correct caller name in push notifications
+    val currentUserId = SupabaseClient.currentUserId
+    LaunchedEffect(currentUserId) {
+        if (currentUserId != null) {
+            val result = SupabaseRepository.getProfileById(currentUserId)
+            result.onSuccess { profile ->
+                ownProfile = profile
+            }
         }
     }
     
@@ -387,6 +439,34 @@ fun CallScreen(
                             // Start ringback tone so caller knows it's ringing
                             CallSoundManager.playRingbackTone()
                             Log.d(TAG, "Call created with ID: ${callId}, room: $createdRoomUrl")
+                            
+                            // Send FCM push notification to callee so they get notified even if app is closed
+                            try {
+                                val pushResponse = httpClient.post("${BuildConfig.SUPABASE_URL}/functions/v1/send-call-notification") {
+                                    contentType(ContentType.Application.Json)
+                                    header("apikey", BuildConfig.SUPABASE_ANON_KEY)
+                                    header("Authorization", "Bearer $accessToken")
+                                    setBody(mapOf(
+                                        "callId" to callId,
+                                        "callerId" to currentUserId,
+                                        "calleeId" to calleeId,
+                                        "callerName" to (ownProfile?.fullName ?: ownProfile?.username ?: "Loop User"),
+                                        "callType" to callType,
+                                        "roomUrl" to createdRoomUrl,
+                                        "calleeToken" to (createdCalleeToken ?: "")
+                                    ))
+                                }
+                                Log.d(TAG, "FCM push notification result: ${pushResponse.status}")
+                                if (!pushResponse.status.isSuccess()) {
+                                    val pushError = pushResponse.bodyAsText()
+                                    Log.w(TAG, "FCM push failed: $pushError")
+                                    addErrorLog("FCM push: $pushError")
+                                }
+                            } catch (pushEx: Exception) {
+                                // Non-critical: call still works via in-app polling
+                                Log.w(TAG, "FCM push notification failed: ${pushEx.message}")
+                                addErrorLog("FCM push exception: ${pushEx.message}")
+                            }
                         }
                     } else {
                         val errorBody = response.bodyAsText()
@@ -521,13 +601,13 @@ fun CallScreen(
             }
             
             // === READY TO JOIN DAILY.CO ROOM ===
-            callStatus = "Connecting..."
+            callStatus = "Joining room..."
             Log.d(TAG, "=== CALLEE READY TO JOIN DAILY.CO ROOM ===")
             Log.d(TAG, "Room URL: $roomUrl")
             Log.d(TAG, "Meeting token present: ${!meetingToken.isNullOrEmpty()}")
             
             readyToJoin = true
-            isConnected = true
+            // isConnected will be set to true by the dailyCallState observer once joined
             Log.d(TAG, "=== CALLEE WAITING FOR PERMISSIONS TO CONNECT ===")
             return@LaunchedEffect
         }
@@ -564,9 +644,9 @@ fun CallScreen(
                             Log.d(TAG, "Meeting token present: ${!meetingToken.isNullOrEmpty()}")
                             
                             delay(500)
-                            callStatus = "Connected"
+                            callStatus = "Joining room..."
                             readyToJoin = true
-                            isConnected = true
+                            // isConnected will be set to true by the dailyCallState observer once joined
                             Log.d(TAG, "Caller waiting for permissions to connect to Daily room!")
                         }
                         "rejected" -> {
@@ -609,6 +689,20 @@ fun CallScreen(
     // Duration timer - only runs when connected
     LaunchedEffect(isConnected) {
         if (isConnected) {
+            // Set audio mode to communication so speaker toggle works
+            val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            // Actually activate speaker since isSpeakerOn defaults to true
+            if (isSpeakerOn) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    val devices = audioManager.availableCommunicationDevices
+                    val speaker = devices.find { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                    speaker?.let { audioManager.setCommunicationDevice(it) }
+                } else {
+                    @Suppress("DEPRECATION")
+                    audioManager.isSpeakerphoneOn = true
+                }
+            }
             while (true) {
                 delay(1000)
                 callDuration++
@@ -616,9 +710,18 @@ fun CallScreen(
         }
     }
     
-    // Handle end call - update status in database
     val handleEndCall: () -> Unit = {
-        // Leave Daily.co room first
+        // Restore audio routing before ending
+        val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+        audioManager.mode = AudioManager.MODE_NORMAL
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            audioManager.clearCommunicationDevice()
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.isSpeakerphoneOn = false
+        }
+        
+        // Leave Daily.co room
         DailyCallManager.leaveCall()
         
         coroutineScope.launch {
@@ -659,34 +762,28 @@ fun CallScreen(
             .fillMaxSize()
             .background(Background)
     ) {
-        // Decorative gradient orbs in background
+        // Decorative gradient orbs for "Sunset" feel
         Box(
             modifier = Modifier
-                .size(400.dp)
-                .align(Alignment.TopCenter)
-                .offset(y = (-100).dp)
-                .blur(120.dp)
+                .size(600.dp)
+                .align(Alignment.TopEnd)
+                .offset(x = 100.dp, y = (-200).dp)
+                .blur(150.dp)
                 .background(
                     brush = Brush.radialGradient(
-                        colors = listOf(
-                            Primary.copy(alpha = 0.25f),
-                            androidx.compose.ui.graphics.Color.Transparent
-                        )
+                        colors = listOf(Primary.copy(alpha = 0.35f), Color.Transparent)
                     )
                 )
         )
         Box(
             modifier = Modifier
-                .size(300.dp)
+                .size(500.dp)
                 .align(Alignment.BottomStart)
-                .offset(x = (-50).dp, y = 50.dp)
-                .blur(100.dp)
+                .offset(x = (-100.dp), y = 150.dp)
+                .blur(140.dp)
                 .background(
                     brush = Brush.radialGradient(
-                        colors = listOf(
-                            Secondary.copy(alpha = 0.2f),
-                            androidx.compose.ui.graphics.Color.Transparent
-                        )
+                        colors = listOf(Secondary.copy(alpha = 0.25f), Color.Transparent)
                     )
                 )
         )
@@ -706,16 +803,39 @@ fun CallScreen(
                         .background(Background),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (callType == "video") {
+                if (callType == "video") {
                         // Remote Participant Video (Full Screen)
-                        if (remoteParticipant != null && remoteParticipant.media?.camera?.state == co.daily.model.MediaState.playable) {
-                            DailyVideoView(
-                                videoTrack = remoteParticipant.media?.camera?.track,
-                                modifier = Modifier.fillMaxSize(),
-                                scaleMode = VideoView.VideoScaleMode.FILL
-                            )
+                        if (remoteParticipant != null) {
+                            val remoteVideoTrack = remoteParticipant.media?.camera?.track
+                            val remoteCameraState = remoteParticipant.media?.camera?.state
+                            
+                            Log.d(TAG, "Remote participant: id=${remoteParticipant.id}, cameraState=$remoteCameraState, hasTrack=${remoteVideoTrack != null}")
+                            
+                            if (remoteCameraState == co.daily.model.MediaState.playable && remoteVideoTrack != null) {
+                                key(remoteParticipant.id.toString()) {
+                                    DailyVideoView(
+                                        videoTrack = remoteVideoTrack,
+                                        modifier = Modifier.fillMaxSize(),
+                                        scaleMode = VideoView.VideoScaleMode.FILL
+                                    )
+                                }
+                            } else {
+                                // Remote connected but video off or track not ready
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    GradientAvatar(initial = displayInitial, size = 120.dp, borderWidth = 3.dp)
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = if (remoteCameraState == co.daily.model.MediaState.off) 
+                                            "$displayName (Camera Off)" 
+                                        else 
+                                            "$displayName (Connecting video...)",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = TextSecondary
+                                    )
+                                }
+                            }
                         } else if (dailyHasRemote) {
-                            // Remote connected but video off
+                            // Remote connected but no participant object yet
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 GradientAvatar(initial = displayInitial, size = 120.dp, borderWidth = 3.dp)
                                 Spacer(modifier = Modifier.height(16.dp))
@@ -738,22 +858,29 @@ fun CallScreen(
                             }
                         }
 
-                        // Local Participant Video (Picture-in-Picture)
-                        if (dailyLocalParticipant != null && !isVideoOff && dailyLocalParticipant?.media?.camera?.state == co.daily.model.MediaState.playable) {
+                        // Local Participant Video (Picture-in-Picture) — larger and more visible
+                        val localVideoTrack = dailyLocalParticipant?.media?.camera?.track
+                        val localCameraState = dailyLocalParticipant?.media?.camera?.state
+                        
+                        if (dailyLocalParticipant != null && !isVideoOff && localCameraState == co.daily.model.MediaState.playable && localVideoTrack != null) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)
-                                    .padding(16.dp)
-                                    .size(100.dp, 150.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .border(2.dp, SurfaceVariant, RoundedCornerShape(12.dp))
+                                    .padding(bottom = 16.dp, end = 16.dp)
+                                    .size(140.dp, 200.dp)
+                                    .shadow(12.dp, RoundedCornerShape(16.dp))
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .border(2.dp, SurfaceVariant.copy(alpha = 0.8f), RoundedCornerShape(16.dp))
                                     .background(Color.Black)
+                                    .clickable { /* Tap to swap views in future */ }
                             ) {
-                                DailyVideoView(
-                                    videoTrack = dailyLocalParticipant?.media?.camera?.track,
-                                    modifier = Modifier.fillMaxSize(),
-                                    scaleMode = VideoView.VideoScaleMode.FIT
-                                )
+                                key("local") {
+                                    DailyVideoView(
+                                        videoTrack = localVideoTrack,
+                                        modifier = Modifier.fillMaxSize(),
+                                        scaleMode = VideoView.VideoScaleMode.FILL
+                                    )
+                                }
                             }
                         }
                     } else {
@@ -781,29 +908,48 @@ fun CallScreen(
                     }
                 }
                 
-                // Call duration overlay
+                // Premium Call Header (Glass)
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 16.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Surface.copy(alpha = 0.8f))
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .padding(top = 48.dp)
+                        .clip(RoundedCornerShape(32.dp))
+                        .border(0.5.dp, SurfaceLight.copy(alpha = 0.3f), RoundedCornerShape(32.dp))
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Blurry background layer
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .background(GlassBackground)
+                            .blur(20.dp)
+                    )
+                    
+                    Row(
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Box(
                             modifier = Modifier
-                                .size(8.dp)
+                                .size(10.dp)
                                 .clip(CircleShape)
                                 .background(Success)
+                                .shadow(8.dp, CircleShape)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = formattedDuration,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = TextPrimary,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = displayName,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = formattedDuration,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextSecondary,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
                 }
             }
@@ -898,24 +1044,56 @@ fun CallScreen(
                 Text(
                     text = callStatus,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = TextSecondary
+                    color = TextSecondary,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
+                
+                if (dailyError != null && roomUrl != null) {
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Button(
+                        onClick = {
+                            if (cameraPermissionState.allPermissionsGranted) {
+                                DailyCallManager.joinCall(
+                                    roomUrl = roomUrl!!,
+                                    meetingToken = meetingToken,
+                                    isVideoCall = callType == "video"
+                                )
+                            } else {
+                                cameraPermissionState.launchMultiplePermissionRequest()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                    ) {
+                        Text("Retry Connection")
+                    }
+                }
                 
                 Spacer(modifier = Modifier.weight(0.7f))
             }
         }
         
         // Call controls (always visible at bottom)
-        Column(
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .navigationBarsPadding()
+                .padding(bottom = 32.dp)
         ) {
+            // Glass backdrop for controls
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .padding(horizontal = 16.dp)
+                    .clip(RoundedCornerShape(40.dp))
+                    .background(GlassBackground)
+                    .blur(20.dp)
+                    .border(1.dp, SurfaceLight.copy(alpha = 0.2f), RoundedCornerShape(40.dp))
+            )
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 32.dp),
+                    .padding(horizontal = 32.dp, vertical = 16.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -925,7 +1103,6 @@ fun CallScreen(
                     label = if (isMuted) "Unmute" else "Mute",
                     isActive = isMuted,
                     onClick = { 
-                        isMuted = !isMuted
                         DailyCallManager.toggleMute()
                     }
                 )
@@ -937,12 +1114,34 @@ fun CallScreen(
                         label = if (isVideoOff) "Video On" else "Video Off",
                         isActive = isVideoOff,
                         onClick = { 
-                            isVideoOff = !isVideoOff
                             DailyCallManager.toggleVideo()
                         }
                     )
                 }
                 
+                // End call button (Prominent)
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 8.dp)
+                        .size(72.dp)
+                        .shadow(16.dp, CircleShape, spotColor = ErrorColor)
+                        .clip(CircleShape)
+                        .background(ErrorColor),
+                    contentAlignment = Alignment.Center
+                ) {
+                    IconButton(
+                        onClick = { handleEndCall() },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CallEnd,
+                            contentDescription = "End Call",
+                            modifier = Modifier.size(32.dp),
+                            tint = TextPrimary
+                        )
+                    }
+                }
+
                 // Speaker button
                 CallControlButton(
                     icon = if (isSpeakerOn) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
@@ -978,29 +1177,6 @@ fun CallScreen(
                             isFrontCamera = !isFrontCamera
                             DailyCallManager.switchCamera()
                         }
-                    )
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            // End call button
-            Box(
-                modifier = Modifier
-                    .size(72.dp)
-                    .clip(CircleShape)
-                    .background(Error),
-                contentAlignment = Alignment.Center
-            ) {
-                IconButton(
-                    onClick = { handleEndCall() },
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CallEnd,
-                        contentDescription = "End Call",
-                        modifier = Modifier.size(32.dp),
-                        tint = TextPrimary
                     )
                 }
             }
@@ -1070,42 +1246,32 @@ private fun CallControlButton(
     ) {
         Box(
             modifier = Modifier
-                .size(56.dp)
-                .then(
-                    if (isActive) {
-                        Modifier.border(
-                            width = 2.dp,
-                            brush = Brush.sweepGradient(AvatarBorderGradient),
-                            shape = CircleShape
-                        )
-                    } else {
-                        Modifier
-                    }
-                )
+                .size(64.dp)
                 .clip(CircleShape)
-                .background(
-                    if (isActive) Surface else SurfaceVariant
-                ),
+                .background(if (isActive) Primary.copy(alpha = 0.2f) else GlassBackground)
+                .border(
+                    width = 1.dp,
+                    brush = if (isActive) Brush.linearGradient(PrimaryGradientColors) else Brush.linearGradient(listOf(SurfaceLight.copy(alpha = 0.3f), SurfaceLight.copy(alpha = 0.1f))),
+                    shape = CircleShape
+                )
+                .clickable { onClick() },
             contentAlignment = Alignment.Center
         ) {
-            IconButton(
-                onClick = onClick,
-                modifier = Modifier.fillMaxSize()
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = label,
-                    tint = if (isActive) Primary else TextSecondary
-                )
-            }
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = if (isActive) Primary else Color.White,
+                modifier = Modifier.size(28.dp)
+            )
         }
         
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(10.dp))
         
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = TextSecondary
+            color = if (isActive) Primary else Color.White.copy(alpha = 0.7f),
+            fontWeight = FontWeight.Medium
         )
     }
 }

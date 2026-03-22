@@ -58,6 +58,10 @@ fun ChatScreen(
     
     val otherUserAvatar = chatViewModel.otherParticipant?.avatarUrl
     
+    val otherUserId = chatViewModel.otherParticipant?.userId ?: chatViewModel.otherParticipant?.id
+    val onlineUsers by com.loopchat.app.data.realtime.SupabaseRealtimeClient.onlineUsers.collectAsState(initial = emptySet())
+    val isOnline = otherUserId != null && onlineUsers.contains(otherUserId)
+
     Scaffold(
         containerColor = Background,
         topBar = {
@@ -66,7 +70,7 @@ fun ChatScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         // Gradient Avatar
                         val isGroupChat = chatViewModel.currentConversation?.is_group == true
-                        SmallGradientAvatar(
+                        com.loopchat.app.ui.components.SmallGradientAvatar(
                             initial = otherUserName.firstOrNull()?.toString() ?: "?",
                             imageUrl = otherUserAvatar,
                             size = 42.dp,
@@ -81,15 +85,20 @@ fun ChatScreen(
                                 color = TextPrimary
                             )
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
-                                        .background(if (chatViewModel.isLoading) Warning else Online)
-                                )
+                                if (chatViewModel.isLoading) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(Warning)
+                                    )
+                                } else if (!isGroupChat) {
+                                    com.loopchat.app.ui.components.PresenceIndicator(isOnline = isOnline, size = 8.dp)
+                                }
+                                
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (chatViewModel.isLoading) "Loading..." else "Online",
+                                    text = if (chatViewModel.isLoading) "Loading..." else if (isGroupChat) "Group Message" else if (isOnline) "Online" else "Offline",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary
                                 )
@@ -127,7 +136,7 @@ fun ChatScreen(
                 .padding(paddingValues)
         ) {
             // Messages list
-            if (chatViewModel.isLoading) {
+            if (chatViewModel.isLoading && chatViewModel.messages.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -186,7 +195,7 @@ fun ChatScreen(
             chatViewModel.errorMessage?.let { error ->
                 Text(
                     text = error,
-                    color = Error,
+                    color = ErrorColor,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -235,9 +244,9 @@ fun ChatScreen(
                             .clip(CircleShape)
                             .background(
                                 brush = if (messageText.isNotBlank()) 
-                                    Brush.linearGradient(SunsetGradientColors)
+                                    Brush.linearGradient(PrimaryGradientColors)
                                 else 
-                                    Brush.linearGradient(SunsetGradientColors.map { it.copy(alpha = 0.5f) })
+                                    Brush.linearGradient(PrimaryGradientColors.map { it.copy(alpha = 0.5f) })
                             ),
                         contentAlignment = Alignment.Center
                     ) {
@@ -297,7 +306,7 @@ private fun MessageBubble(
                     .then(
                         if (isFromMe) {
                             Modifier.background(
-                                brush = Brush.horizontalGradient(SunsetGradientColors)
+                                brush = Brush.horizontalGradient(PrimaryGradientColors)
                             )
                         } else {
                             Modifier.background(MessageReceived)

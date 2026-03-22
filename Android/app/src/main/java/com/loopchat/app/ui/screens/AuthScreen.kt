@@ -168,13 +168,13 @@ fun AuthScreen(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
-                        containerColor = Error.copy(alpha = 0.15f)
+                        containerColor = ErrorColor.copy(alpha = 0.15f)
                     ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
                         text = error,
-                        color = Error,
+                        color = ErrorColor,
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(12.dp),
                         textAlign = TextAlign.Center
@@ -218,7 +218,7 @@ private fun AuthViewToggle(
                         .then(
                             if (isSelected) {
                                 Modifier.background(
-                                    brush = Brush.horizontalGradient(SunsetGradientColors)
+                                    brush = Brush.horizontalGradient(PrimaryGradientColors)
                                 )
                             } else {
                                 Modifier.background(Color.Transparent)

@@ -224,7 +224,7 @@ fun ProfileScreen(
                     errorMessage?.let { error ->
                         Text(
                             text = error,
-                            color = Error,
+                            color = ErrorColor,
                             style = MaterialTheme.typography.bodySmall
                         )
                         Spacer(modifier = Modifier.height(8.dp))
@@ -326,7 +326,7 @@ fun ProfileScreen(
                                             .weight(1f)
                                             .height(48.dp)
                                             .background(
-                                                brush = Brush.horizontalGradient(SunsetGradientColors),
+                                                brush = Brush.horizontalGradient(PrimaryGradientColors),
                                                 shape = RoundedCornerShape(24.dp)
                                             )
                                             .clip(RoundedCornerShape(24.dp)),
@@ -482,7 +482,7 @@ fun ProfileScreen(
                             .height(56.dp)
                             .border(
                                 width = 2.dp,
-                                brush = Brush.horizontalGradient(listOf(Error, Error.copy(alpha = 0.6f))),
+                                brush = Brush.horizontalGradient(listOf(ErrorColor, ErrorColor.copy(alpha = 0.6f))),
                                 shape = RoundedCornerShape(14.dp)
                             )
                             .clip(RoundedCornerShape(14.dp)),
@@ -497,8 +497,8 @@ fun ProfileScreen(
                             },
                             modifier = Modifier.fillMaxSize(),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = Error.copy(alpha = 0.1f),
-                                contentColor = Error
+                                containerColor = ErrorColor.copy(alpha = 0.1f),
+                                contentColor = ErrorColor
                             ),
                             shape = RoundedCornerShape(14.dp)
                         ) {

@@ -9,6 +9,7 @@ import co.daily.model.MediaState
 import co.daily.model.Participant
 import co.daily.model.ParticipantId
 import co.daily.model.MeetingToken
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -79,6 +80,7 @@ object DailyCallManager : CallClientListener {
         
         intendedInitialVideoState = isVideoCall
         // Initially set state to disconnected/off values while joining
+        _callState.value = CallState.joining
         _isVideoEnabled.value = false
         _isMuted.value = true
         
@@ -151,24 +153,51 @@ object DailyCallManager : CallClientListener {
                 // Determine current camera device ID. If null, use the first one.
                 val currentDeviceId = callClient?.inputs()?.camera?.settings?.deviceId
                 
-                // Find a device that is different from the current one9
+                // Find a device that is different from the current one
                 val nextDevice = cameraDevices.firstOrNull { device -> device.deviceId != currentDeviceId }
                     ?: cameraDevices.first()
 
                 Log.d(TAG, "Switching camera to device: ${nextDevice.deviceId}")
-                
-                // Update inputs — deviceId expects Update<Device>?, not a plain String
-                val cameraUpdate = co.daily.settings.CameraInputSettingsUpdate(
-                    settings = co.daily.settings.VideoMediaTrackSettingsUpdate(
-                        deviceId = co.daily.settings.Device(nextDevice.deviceId)
-                    )
-                )
-                val inputUpdate = co.daily.settings.InputSettingsUpdate(camera = cameraUpdate)
-                callClient?.updateInputs(inputUpdate)
+                setCameraDevice(nextDevice.deviceId)
             } else {
                 Log.d(TAG, "Only one or zero camera devices available, cannot switch")
             }
         } ?: Log.e(TAG, "Cannot get available devices: callClient is null")
+    }
+
+    /**
+     * Select the front-facing camera device explicitly.
+     * Should be called after join to ensure user sees themselves, not the back camera.
+     */
+    fun selectFrontCamera() {
+        callClient?.availableDevices()?.let { availableDevices ->
+            val cameraDevices = availableDevices.camera
+            Log.d(TAG, "Available cameras: ${cameraDevices.map { "${it.deviceId}" }}")
+
+            val frontCamera = cameraDevices.find {
+                it.deviceId.contains("front", ignoreCase = true) ||
+                it.deviceId.contains("user", ignoreCase = true) ||
+                it.deviceId.contains("1")
+            }
+            if (frontCamera != null) {
+                Log.d(TAG, "Selecting front camera: ${frontCamera.deviceId}")
+                setCameraDevice(frontCamera.deviceId)
+            } else {
+                Log.w(TAG, "No front camera found in: ${cameraDevices.map { it.deviceId }}")
+            }
+        } ?: Log.e(TAG, "Cannot get available devices")
+    }
+
+    /**
+     * Helper: set camera to a specific device ID
+     */
+    private fun setCameraDevice(deviceId: String) {
+        val cameraUpdate = co.daily.settings.CameraInputSettingsUpdate(
+            settings = co.daily.settings.VideoMediaTrackSettingsUpdate(
+                deviceId = co.daily.settings.Device(deviceId)
+            )
+        )
+        callClient?.updateInputs(co.daily.settings.InputSettingsUpdate(camera = cameraUpdate))
     }
 
     /**
@@ -205,8 +234,17 @@ object DailyCallManager : CallClientListener {
         
         // Sync our local mute/camera states with the actual hardware state
         participants.local?.let { local ->
-            _isMuted.value = local.media?.microphone?.state == MediaState.off
-            _isVideoEnabled.value = local.media?.camera?.state != MediaState.off
+            val camState = local.media?.camera?.state
+            val micState = local.media?.microphone?.state
+            val hasTrack = local.media?.camera?.track != null
+            Log.d(TAG, "updateParticipants: local camera=$camState, hasTrack=$hasTrack, mic=$micState")
+            _isMuted.value = micState == MediaState.off
+            _isVideoEnabled.value = camState != MediaState.off
+        }
+        
+        // Log remote participants
+        remoteOnes.forEach { (id, p) ->
+            Log.d(TAG, "updateParticipants: remote id=$id, camera=${p.media?.camera?.state}, hasTrack=${p.media?.camera?.track != null}")
         }
     }
 
@@ -222,11 +260,41 @@ object DailyCallManager : CallClientListener {
                 _isJoined.value = true
                 
                 // STEP 3: Enable the intended inputs AFTER join is completed
+                Log.d(TAG, "Enabling camera=$intendedInitialVideoState, microphone=true")
                 callClient?.setInputsEnabled(camera = intendedInitialVideoState, microphone = true)
                 _isVideoEnabled.value = intendedInitialVideoState
                 _isMuted.value = false
+
+                // STEP 4: Select front camera by default for video calls
+                if (intendedInitialVideoState) {
+                    selectFrontCamera()
+                }
                 
                 updateParticipants()
+                
+                // The camera hardware takes time to initialize after setInputsEnabled.
+                // Poll participant state to catch when the local camera becomes playable.
+                if (intendedInitialVideoState) {
+                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                        repeat(10) { attempt ->
+                            kotlinx.coroutines.delay(500)
+                            updateParticipants()
+                            val localCamState = _localParticipant.value?.media?.camera?.state
+                            Log.d(TAG, "Camera init poll #${attempt + 1}: localCameraState=$localCamState")
+                            if (localCamState == MediaState.playable) {
+                                Log.d(TAG, "Local camera is now playable!")
+                                return@launch
+                            }
+                            // If still not playable after 2 seconds, try enabling again and selecting front camera again
+                            if (attempt == 3 || attempt == 7) {
+                                Log.d(TAG, "Camera not playable, re-enabling camera input and retrying front camera selection")
+                                callClient?.setInputsEnabled(camera = true, microphone = true)
+                                selectFrontCamera()
+                            }
+                        }
+                        Log.w(TAG, "Camera did not become playable after 5 seconds of polling")
+                    }
+                }
             }
             CallState.left -> {
                 Log.d(TAG, "Left the WebRTC meeting")
@@ -242,12 +310,18 @@ object DailyCallManager : CallClientListener {
     }
 
     override fun onParticipantUpdated(participant: Participant) {
-        Log.d(TAG, "Participant updated: ${participant.id}")
+        Log.d(TAG, "Participant updated: ${participant.id}, cameraState=${participant.media?.camera?.state}, hasVideoTrack=${participant.media?.camera?.track != null}")
         updateParticipants()
     }
 
     override fun onParticipantLeft(participant: Participant, reason: co.daily.model.ParticipantLeftReason) {
         Log.d(TAG, "Participant left: ${participant.id}. Reason: $reason")
+        updateParticipants()
+    }
+
+    override fun onInputsUpdated(inputSettings: co.daily.settings.InputSettings) {
+        Log.d(TAG, "Inputs updated - camera: ${inputSettings.camera}, microphone: ${inputSettings.microphone}")
+        // Re-read participant state whenever camera/mic inputs change
         updateParticipants()
     }
 

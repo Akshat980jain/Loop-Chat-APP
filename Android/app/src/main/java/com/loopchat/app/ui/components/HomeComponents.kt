@@ -20,6 +20,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.loopchat.app.data.ConversationWithParticipant
 import com.loopchat.app.ui.theme.*
@@ -74,6 +75,8 @@ fun ConversationItem(
     conversation: ConversationWithParticipant,
     isPinned: Boolean,
     isMuted: Boolean,
+    isOnline: Boolean = false,
+    unreadCount: Int = 0,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -109,21 +112,31 @@ fun ConversationItem(
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Avatar
-            if (!displayAvatarUrl.isNullOrEmpty()) {
-                AsyncImage(
-                    model = displayAvatarUrl,
-                    contentDescription = displayName,
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(CircleShape),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                SmallGradientAvatar(
-                    initial = initialChar,
-                    size = 56.dp,
-                    isGroup = conversation.isGroup // Added parameter assuming it exists or can be ignored
-                )
+            Box {
+                if (!displayAvatarUrl.isNullOrEmpty()) {
+                    AsyncImage(
+                        model = displayAvatarUrl,
+                        contentDescription = displayName,
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    SmallGradientAvatar(
+                        initial = initialChar,
+                        size = 56.dp,
+                        isGroup = conversation.isGroup
+                    )
+                }
+                
+                if (!conversation.isGroup && isOnline) {
+                    PresenceIndicator(
+                        isOnline = true,
+                        size = 14.dp,
+                        modifier = Modifier.align(Alignment.BottomEnd)
+                    )
+                }
             }
             
             // Content
@@ -170,7 +183,8 @@ fun ConversationItem(
                             Text(
                                 text = formatTime(ts), // Helper function needed or simple text
                                 style = MaterialTheme.typography.labelSmall,
-                                color = TextMuted
+                                color = if (unreadCount > 0) Primary else TextMuted,
+                                fontWeight = if (unreadCount > 0) FontWeight.Bold else FontWeight.Normal
                             )
                         }
                     }
@@ -178,13 +192,50 @@ fun ConversationItem(
                 
                 Spacer(modifier = Modifier.height(4.dp))
                 
-                Text(
-                    text = conversation.lastMessage ?: "No messages",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // Smart preview based on message type
+                    val previewText = when {
+                        conversation.lastMessage == null && conversation.lastMessageType == null -> "No messages"
+                        conversation.lastMessageType == "image" -> "📷 Photo"
+                        conversation.lastMessageType == "video" -> "🎥 Video"
+                        conversation.lastMessageType == "document" -> "📄 Document"
+                        conversation.lastMessageType == "voice" -> "🎤 Voice message"
+                        conversation.lastMessageType == "poll" -> "📊 Poll"
+                        conversation.lastMessage.isNullOrBlank() -> "No messages"
+                        else -> conversation.lastMessage
+                    }
+
+                    Text(
+                        text = previewText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (unreadCount > 0) TextPrimary else TextSecondary,
+                        fontWeight = if (unreadCount > 0) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    
+                    if (unreadCount > 0) {
+                        Box(
+                            modifier = Modifier
+                                .padding(start = 8.dp)
+                                .size(24.dp)
+                                .background(Primary, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = unreadCount.toString(),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
             }
         }
     }

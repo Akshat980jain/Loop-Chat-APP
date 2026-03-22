@@ -22,7 +22,10 @@ data class MessageEntity(
     val mediaUrl: String?,
     val createdAt: String?,
     val isRead: Boolean,
-    val status: String = "synced" // "pending", "synced", "failed"
+    val status: String = "synced", // "pending", "synced", "failed"
+    val mediaDuration: Long? = null,
+    val waveformData: String? = null,
+    val expiresAt: String? = null
 )
 
 fun Message.toEntity() = MessageEntity(
@@ -34,5 +37,8 @@ fun Message.toEntity() = MessageEntity(
     mediaUrl = mediaUrl,
     createdAt = createdAt,
     isRead = isRead,
-    status = "synced"
+    status = "synced",
+    mediaDuration = mediaDuration,
+    waveformData = waveformData?.toString(),
+    expiresAt = expiresAt
 )

@@ -247,7 +247,7 @@ private fun ActionButton(
                 .size(56.dp)
                 .clip(CircleShape)
                 .background(
-                    brush = Brush.linearGradient(SunsetGradientColors)
+                    brush = Brush.linearGradient(PrimaryGradientColors)
                 )
         ) {
             Icon(
@@ -281,8 +281,8 @@ private fun CallHistoryItem(call: CallWithProfile) {
     
     // Call status icon and color
     val (statusIcon, statusColor, statusText) = when {
-        call.status == "missed" && !call.isOutgoing -> Triple(Icons.Default.CallMissed, Error, "Missed")
-        call.status == "rejected" -> Triple(Icons.Default.CallEnd, Error, "Rejected")
+        call.status == "missed" && !call.isOutgoing -> Triple(Icons.Default.CallMissed, ErrorColor, "Missed")
+        call.status == "rejected" -> Triple(Icons.Default.CallEnd, ErrorColor, "Rejected")
         call.isOutgoing -> Triple(Icons.Default.CallMade, Online, "Outgoing")
         else -> Triple(Icons.Default.CallReceived, Online, "Incoming")
     }

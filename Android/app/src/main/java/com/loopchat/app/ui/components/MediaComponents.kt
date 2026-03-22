@@ -107,7 +107,7 @@ fun AttachmentMenu(
                 AttachmentOption(
                     icon = Icons.Default.CameraAlt,
                     label = "Camera",
-                    color = Error,
+                    color = ErrorColor,
                     onClick = {
                         onCameraSelected()
                         onDismiss()
@@ -122,7 +122,7 @@ fun AttachmentMenu(
 }
 
 @Composable
-private fun AttachmentOption(
+fun AttachmentOption(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     color: Color,
@@ -185,7 +185,7 @@ fun VoiceRecordButton(
                     Icon(
                         Icons.Default.Close,
                         contentDescription = "Cancel",
-                        tint = Error
+                        tint = ErrorColor
                     )
                 }
                 
@@ -212,7 +212,7 @@ fun VoiceRecordButton(
                             modifier = Modifier
                                 .size(12.dp)
                                 .clip(CircleShape)
-                                .background(Error)
+                                .background(ErrorColor)
                         )
                     }
                     
@@ -459,7 +459,7 @@ fun LocationDisplay(
                 Icon(
                     Icons.Default.LocationOn,
                     contentDescription = "Location",
-                    tint = if (isLive) Error else Primary
+                    tint = if (isLive) ErrorColor else Primary
                 )
                 
                 Column(modifier = Modifier.weight(1f)) {
@@ -467,7 +467,7 @@ fun LocationDisplay(
                         Text(
                             text = "Live Location",
                             style = MaterialTheme.typography.labelMedium,
-                            color = Error,
+                            color = ErrorColor,
                             fontWeight = FontWeight.Bold
                         )
                     }

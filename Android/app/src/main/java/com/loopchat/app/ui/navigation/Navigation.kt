@@ -38,6 +38,14 @@ import com.loopchat.app.ui.components.DeviceManagementScreen
 import com.loopchat.app.ui.components.ActiveSessionsScreen
 import com.loopchat.app.ui.viewmodels.SettingsViewModel
 
+// New Phase 4 screens
+import com.loopchat.app.ui.screens.SearchScreen
+import com.loopchat.app.ui.screens.NotificationsScreen
+import com.loopchat.app.ui.screens.StatusScreen
+import com.loopchat.app.ui.screens.MediaGalleryScreen
+import com.loopchat.app.ui.screens.QRScanScreen
+import com.loopchat.app.ui.screens.BlockedContactsScreen
+
 sealed class Screen(val route: String) {
     object Auth : Screen("auth")
     object Home : Screen("home")
@@ -77,6 +85,14 @@ sealed class Screen(val route: String) {
     object BlockedUsers : Screen("blocked_users")
     object DeviceManagement : Screen("device_management")
     object ActiveSessions : Screen("active_sessions")
+    
+    // Phase 4: New Screens
+    object Search : Screen("search")
+    object Notifications : Screen("notifications")
+    object Status : Screen("status")
+    object MediaGallery : Screen("media_gallery")
+    object QRScan : Screen("qr_scan")
+    object BlockedContacts : Screen("blocked_contacts")
 }
 
 @Composable
@@ -226,6 +242,9 @@ fun LoopChatNavigation(
                 onBackClick = { navController.popBackStack() },
                 onCallClick = { calleeId, callType ->
                     navController.navigate(Screen.Call.createRoute(calleeId, callType))
+                },
+                onNavigateToProfile = {
+                    navController.navigate(Screen.Profile.route)
                 }
             )
         }
@@ -404,6 +423,43 @@ fun LoopChatNavigation(
                 isLoading = viewModel.isLoading,
                 onRevokeSession = { viewModel.revokeSession(it) },
                 onRevokeAllOthers = { viewModel.revokeAllOtherSessions() },
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+        
+        // Phase 4: New Screens
+        composable(Screen.Search.route) {
+            SearchScreen(
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+        
+        composable(Screen.Notifications.route) {
+            NotificationsScreen(
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+        
+        composable(Screen.Status.route) {
+            StatusScreen(
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+        
+        composable(Screen.MediaGallery.route) {
+            MediaGalleryScreen(
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+        
+        composable(Screen.QRScan.route) {
+            QRScanScreen(
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+        
+        composable(Screen.BlockedContacts.route) {
+            BlockedContactsScreen(
                 onBackClick = { navController.popBackStack() }
             )
         }

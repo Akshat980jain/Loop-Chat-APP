@@ -34,7 +34,9 @@ class ChatViewModel : ViewModel() {
         currentConversationId = conversationId
         
         viewModelScope.launch {
-            isLoading = true
+            if (messages.isEmpty()) {
+                isLoading = true
+            }
             errorMessage = null
             
             // Load other participant first
@@ -76,8 +78,8 @@ class ChatViewModel : ViewModel() {
                 // Synthesize a Profile for the group so the UI uses its name and avatar
                 otherParticipant = Profile(
                     id = conv.id,
-                    fullName = conv.name ?: "Unnamed Group",
-                    avatarUrl = conv.avatar_url,
+                    fullName = conv.groups?.name ?: "Unnamed Group",
+                    avatarUrl = conv.groups?.avatar_url,
                     username = "Group"
                 )
                 return // Skip loading individual participant

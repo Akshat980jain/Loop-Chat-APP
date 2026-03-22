@@ -11,7 +11,11 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.decodeFromJsonElement
 import com.loopchat.app.data.local.LoopChatDatabase
 import com.loopchat.app.data.local.entities.toEntity
 
@@ -64,15 +68,68 @@ object SupabaseRepository {
     }
 
     /**
-     * Fetch all conversations (no user filtering for now)
+     * Retrieve a user's RSA Public Key from Supabase for E2EE message encryption.
+     */
+    suspend fun getPublicKey(userId: String): Result<String> {
+        val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
+        return try {
+            val response = httpClient.get("$supabaseUrl/rest/v1/user_public_keys") {
+                parameter("select", "public_key")
+                parameter("user_id", "eq.$userId")
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $accessToken")
+                header("Accept", "application/vnd.pgrst.object+json")
+            }
+            if (response.status.isSuccess()) {
+                val resultData = response.body<Map<String, String>>()
+                val publicKey = resultData["public_key"]
+                if (publicKey != null) {
+                    Result.success(publicKey)
+                } else {
+                    Result.failure(Exception("Public key field missing"))
+                }
+            } else {
+                Result.failure(Exception("Public key not found for user"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Fetch conversations where the current user is a participant
      */
     suspend fun getConversations(userId: String): Result<List<ConversationWithParticipant>> {
         return try {
             val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
 
-            // Get ALL conversations from the table
+            // Step 1: Get conversation IDs where current user is a participant
+            val participantsResponse = httpClient.get("$supabaseUrl/rest/v1/conversation_participants") {
+                parameter("select", "conversation_id")
+                parameter("user_id", "eq.$userId")
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $accessToken")
+            }
+
+            if (!participantsResponse.status.isSuccess()) {
+                val error = participantsResponse.bodyAsText()
+                android.util.Log.e("SupabaseRepo", "Failed to fetch participant conversations: $error")
+                return Result.failure(Exception("Failed to fetch participant conversations: $error"))
+            }
+
+            val myConversationIds: List<ConversationParticipantId> = participantsResponse.body()
+            android.util.Log.d("SupabaseRepo", "User $userId is participant in ${myConversationIds.size} conversations")
+
+            if (myConversationIds.isEmpty()) {
+                return Result.success(emptyList())
+            }
+
+            val convIdList = myConversationIds.map { it.conversation_id }.joinToString(",")
+
+            // Step 2: Fetch ONLY conversations the user participates in
             val conversationsResponse = httpClient.get("$supabaseUrl/rest/v1/conversations") {
-                parameter("select", "id,updated_at,is_group,group_id,name,avatar_url")
+                parameter("select", "id,updated_at,is_group,group_id,groups(name,avatar_url)")
+                parameter("id", "in.($convIdList)")
                 parameter("order", "updated_at.desc")
                 parameter("limit", "50")
                 header("apikey", supabaseKey)
@@ -86,24 +143,26 @@ object SupabaseRepository {
             }
 
             val allConversations: List<ConversationBasic> = conversationsResponse.body()
-            android.util.Log.d("SupabaseRepo", "Found ${allConversations.size} total conversations")
+            android.util.Log.d("SupabaseRepo", "Found ${allConversations.size} conversations for user")
 
             if (allConversations.isEmpty()) {
                 return Result.success(emptyList())
             }
 
-            // For each conversation, get participants and profile
+            // For each conversation, get participants and profile + last message
             val conversations = allConversations.mapNotNull { conv ->
                 val participant = if (conv.is_group) null else getAnyParticipantProfile(conv.id, userId, accessToken)
+                val lastMsg = getLastMessage(conv.id, accessToken)
                 ConversationWithParticipant(
                     id = conv.id,
                     updatedAt = conv.updated_at,
-                    lastMessage = null,
+                    lastMessage = lastMsg?.first,
+                    lastMessageType = lastMsg?.second,
                     participant = participant,
                     isGroup = conv.is_group,
                     groupId = conv.group_id,
-                    groupName = conv.name,
-                    groupAvatarUrl = conv.avatar_url
+                    groupName = conv.groups?.name,
+                    groupAvatarUrl = conv.groups?.avatar_url
                 )
             }
 
@@ -112,6 +171,35 @@ object SupabaseRepository {
         } catch (e: Exception) {
             android.util.Log.e("SupabaseRepo", "Exception in getConversations: ${e.message}")
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Get the last message for a conversation (content + message_type)
+     * Returns Pair(content, messageType) or null if no messages
+     */
+    private suspend fun getLastMessage(
+        conversationId: String,
+        accessToken: String
+    ): Pair<String, String>? {
+        return try {
+            val response = httpClient.get("$supabaseUrl/rest/v1/messages") {
+                parameter("select", "content,message_type")
+                parameter("conversation_id", "eq.$conversationId")
+                parameter("order", "created_at.desc")
+                parameter("limit", "1")
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $accessToken")
+            }
+            if (!response.status.isSuccess()) return null
+            val messages: List<Map<String, String>> = response.body()
+            val msg = messages.firstOrNull() ?: return null
+            val content = msg["content"] ?: ""
+            val messageType = msg["message_type"] ?: "text"
+            Pair(content, messageType)
+        } catch (e: Exception) {
+            android.util.Log.e("SupabaseRepo", "Failed to fetch last message for $conversationId: ${e.message}")
+            null
         }
     }
 
@@ -134,6 +222,13 @@ object SupabaseRepository {
 
             if (!participantsResponse.status.isSuccess()) return null
             val participants: List<UserIdOnly> = participantsResponse.body()
+
+            // Safety check: verify current user is actually a participant
+            val isParticipant = participants.any { it.user_id == currentUserId }
+            if (!isParticipant) {
+                android.util.Log.w("SupabaseRepo", "User $currentUserId is NOT a participant of conversation $conversationId — skipping")
+                return null
+            }
             
             // Prefer other user, but take any if none
             val targetUserId = participants.find { it.user_id != currentUserId }?.user_id 
@@ -404,7 +499,8 @@ object SupabaseRepository {
         content: String, 
         replyToMessageId: String? = null,
         mediaUrl: String? = null,
-        messageType: String = "text"
+        messageType: String = "text",
+        expiresAt: String? = null
     ): Result<Message> {
         return try {
             val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
@@ -421,7 +517,8 @@ object SupabaseRepository {
                     content = content,
                     reply_to_message_id = replyToMessageId,
                     media_url = mediaUrl,
-                    message_type = messageType
+                    message_type = messageType,
+                    expiresAt = expiresAt
                 ))
             }
 
@@ -581,7 +678,7 @@ object SupabaseRepository {
             val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
             
             val response = httpClient.get("$supabaseUrl/rest/v1/conversations") {
-                parameter("select", "id,updated_at,is_group,group_id,name,avatar_url")
+                parameter("select", "id,updated_at,is_group,group_id,groups(name,avatar_url)")
                 parameter("id", "eq.$conversationId")
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
@@ -593,6 +690,35 @@ object SupabaseRepository {
                 Result.success(conversation)
             } else {
                 Result.failure(Exception("Failed to fetch conversation: ${response.bodyAsText()}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun syncContacts(phoneNumbers: List<String>): Result<List<com.loopchat.app.data.models.Profile>> {
+        return try {
+            val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
+            
+            val response = httpClient.post("$supabaseUrl/functions/v1/sync-contacts") {
+                contentType(ContentType.Application.Json)
+                header("Authorization", "Bearer $accessToken")
+                setBody(mapOf("contacts" to phoneNumbers))
+            }
+            
+            if (response.status.isSuccess()) {
+                val jsonBody = response.bodyAsText()
+                val jsonObject = Json { ignoreUnknownKeys = true }.parseToJsonElement(jsonBody).jsonObject
+                
+                val profilesArray = jsonObject["matched_profiles"]?.jsonArray
+                if (profilesArray != null) {
+                    val decoded = Json { ignoreUnknownKeys = true }.decodeFromJsonElement<List<com.loopchat.app.data.models.Profile>>(profilesArray)
+                    Result.success(decoded)
+                } else {
+                    Result.success(emptyList())
+                }
+            } else {
+                Result.failure(Exception("Failed to sync contacts: \${response.status}"))
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -682,11 +808,28 @@ object SupabaseRepository {
             if (!user2ConvsResponse.status.isSuccess()) return null
             val user2Convs: List<ConversationParticipantId> = user2ConvsResponse.body()
 
-            // Find common conversation (not group)
+            // Find common conversations shared by both users
             val user1ConvIds = user1Convs.map { it.conversation_id }.toSet()
-            val commonConvId = user2Convs.map { it.conversation_id }.find { it in user1ConvIds }
+            val commonConvIds = user2Convs.map { it.conversation_id }.filter { it in user1ConvIds }
 
-            commonConvId
+            if (commonConvIds.isEmpty()) return null
+
+            // Verify the common conversation is a 1:1 chat (not a group)
+            for (convId in commonConvIds) {
+                val convResponse = httpClient.get("$supabaseUrl/rest/v1/conversations") {
+                    parameter("select", "id,is_group")
+                    parameter("id", "eq.$convId")
+                    parameter("is_group", "eq.false")
+                    header("apikey", supabaseKey)
+                    header("Authorization", "Bearer $accessToken")
+                }
+                if (convResponse.status.isSuccess()) {
+                    val convs: List<ConversationBasic> = convResponse.body()
+                    if (convs.isNotEmpty()) return convs.first().id
+                }
+            }
+
+            null
         } catch (e: Exception) {
             null
         }
@@ -1119,13 +1262,18 @@ data class ConversationParticipantId(val conversation_id: String)
 data class UserIdOnly(val user_id: String)
 
 @Serializable
+data class GroupBasic(
+    val name: String? = null,
+    val avatar_url: String? = null
+)
+
+@Serializable
 data class ConversationBasic(
     val id: String,
     val updated_at: String? = null,
     val is_group: Boolean = false,
     val group_id: String? = null,
-    val name: String? = null,
-    val avatar_url: String? = null
+    val groups: GroupBasic? = null
 )
 
 @Serializable
@@ -1144,7 +1292,9 @@ data class SendMessageRequest(
     val content: String,
     val reply_to_message_id: String? = null,
     val media_url: String? = null,
-    val message_type: String = "text"
+    val message_type: String = "text",
+    @SerialName("expires_at")
+    val expiresAt: String? = null
 )
 
 @Serializable
@@ -1165,6 +1315,7 @@ data class ConversationWithParticipant(
     val id: String,
     val updatedAt: String?,
     val lastMessage: String?,
+    val lastMessageType: String? = null,
     val participant: Profile?,
     val isGroup: Boolean = false,
     val groupId: String? = null,
@@ -1196,7 +1347,9 @@ data class MessageWithSender(
     val replyToMessageId: String? = null,
     val forwarded: Boolean? = null,
     val deletedForEveryone: Boolean? = null,
-    val deletedAt: String? = null
+    val deletedAt: String? = null,
+    val isRead: Boolean = false,
+    val status: String = "synced"
 )
 
 /**

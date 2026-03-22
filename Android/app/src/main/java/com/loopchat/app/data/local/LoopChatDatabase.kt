@@ -19,7 +19,7 @@ import com.loopchat.app.data.local.entities.UserEntity
         com.loopchat.app.data.local.entities.GroupEntity::class,
         com.loopchat.app.data.local.entities.GroupMemberEntity::class
     ],
-    version = 2, // Incremented version to support Groups
+    version = 4, // Incremented version to support Vanish Mode (expiresAt)
     exportSchema = false
 )
 abstract class LoopChatDatabase : RoomDatabase() {

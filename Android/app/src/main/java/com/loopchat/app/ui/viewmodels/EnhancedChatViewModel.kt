@@ -17,10 +17,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import io.ktor.client.*
+import io.ktor.client.call.body
 import io.ktor.client.engine.android.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.builtins.*
+import io.ktor.client.request.*
+import io.ktor.http.*
 import com.loopchat.app.data.local.entities.toEntity
 
 class EnhancedChatViewModel : ViewModel() {
@@ -77,6 +82,13 @@ class EnhancedChatViewModel : ViewModel() {
         private set
     var uploadProgress by mutableStateOf<String?>(null)
         private set
+
+    var isVanishModeEnabled by mutableStateOf(false)
+        private set
+        
+    fun toggleVanishMode() {
+        isVanishModeEnabled = !isVanishModeEnabled
+    }
     
     private var currentConversationId: String? = null
     private val httpClient = HttpClient(Android) {
@@ -92,7 +104,9 @@ class EnhancedChatViewModel : ViewModel() {
         currentConversationId = conversationId
         
         viewModelScope.launch {
-            isLoading = true
+            if (messages.isEmpty()) {
+                isLoading = true
+            }
             errorMessage = null
             
             // Initialize and connect Realtime WebSockets
@@ -126,15 +140,25 @@ class EnhancedChatViewModel : ViewModel() {
                             )
                         }
                         
+                        // Decrypt payload if it was sent by someone else
+                        val currentUserId = SupabaseClient.currentUserId
+                        val displayContent = if (entity.senderId != currentUserId && !entity.content.startsWith("\uD83D\uDCCA Poll:")) {
+                            com.loopchat.app.data.crypto.CryptoManager.decryptMessage(entity.content) ?: entity.content
+                        } else {
+                            entity.content
+                        }
+                        
                         MessageWithSender(
                             id = entity.id,
-                            content = entity.content,
+                            content = displayContent,
                             conversationId = entity.conversationId,
                             senderId = entity.senderId,
                             createdAt = entity.createdAt,
                             sender = profile,
                             mediaUrl = entity.mediaUrl,
-                            messageType = entity.messageType
+                            messageType = entity.messageType,
+                            isRead = entity.isRead,
+                            status = entity.status
                         )
                     }
                     
@@ -176,8 +200,8 @@ class EnhancedChatViewModel : ViewModel() {
                 // Synthesize a Profile for the group so the UI uses its name and avatar
                 otherParticipant = Profile(
                     id = conv.id,
-                    fullName = conv.name ?: "Unnamed Group",
-                    avatarUrl = conv.avatar_url,
+                    fullName = conv.groups?.name ?: "Unnamed Group",
+                    avatarUrl = conv.groups?.avatar_url,
                     username = "Group"
                 )
                 return // Skip loading individual participant
@@ -244,6 +268,11 @@ class EnhancedChatViewModel : ViewModel() {
                 return@launch
             }
             
+            val currentUserId = SupabaseClient.currentUserId ?: run {
+                isSending = false
+                return@launch
+            }
+            
             var mediaUrl: String? = null
             var messageType = "text"
             
@@ -283,7 +312,7 @@ class EnhancedChatViewModel : ViewModel() {
             }
             
             // Auto-generate caption for media-only messages
-            val msgContent = content.ifBlank {
+            val displayContent = content.ifBlank {
                 when (messageType) {
                     "image" -> "\uD83D\uDCF7 Photo"
                     "video" -> "\uD83C\uDFA5 Video"
@@ -292,12 +321,59 @@ class EnhancedChatViewModel : ViewModel() {
                 }
             }
             
+            // Optimistic UI: show the message immediately in the chat
+            val tempId = "temp_${System.currentTimeMillis()}"
+            val optimisticMessage = MessageWithSender(
+                id = tempId,
+                content = displayContent,
+                conversationId = conversationId,
+                senderId = currentUserId,
+                createdAt = java.time.Instant.now().toString(),
+                sender = otherParticipant?.let { null } ?: null, // sender is "me", no profile needed for own messages
+                mediaUrl = mediaUrl,
+                messageType = messageType,
+                isRead = false,
+                status = "pending"
+            )
+            messages = messages + optimisticMessage
+            
+            // Now encrypt for sending (keep displayContent visible locally)
+            var msgContent = displayContent
+            
+            // E2EE Implementation
+            // For 1-on-1 chats, we encrypt the message content. Group chats are unencrypted in this simplified model.
+            if (currentConversation?.is_group == false && otherParticipant != null) {
+                try {
+                    val keyResult = SupabaseRepository.getPublicKey(otherParticipant!!.id)
+                    keyResult.getOrNull()?.let { pubKeyBase64 ->
+                        val recipientKey = com.loopchat.app.data.crypto.CryptoManager.parsePublicKey(pubKeyBase64)
+                        if (recipientKey != null) {
+                            val cipherText = com.loopchat.app.data.crypto.CryptoManager.encryptMessage(msgContent, recipientKey)
+                            if (cipherText != null) {
+                                msgContent = cipherText
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("EnhancedChatViewModel", "E2EE encryption failed, sending plaintext", e)
+                }
+            }
+            
+            // Vanish Mode expiration timestamp (24 hours from now)
+            val expiresAtOffset = if (isVanishModeEnabled) {
+                java.time.Instant.now().plusSeconds(24 * 60 * 60).toString()
+            } else null
+            
             val result = SupabaseRepository.sendMessage(
                 conversationId, msgContent,
                 mediaUrl = mediaUrl,
-                messageType = messageType
+                messageType = messageType,
+                expiresAt = expiresAtOffset
             )
             result.onSuccess { message ->
+                // Remove the optimistic message (Room observer will add the real one)
+                messages = messages.filterNot { it.id == tempId }
+                
                 context?.let { ctx ->
                     val db = com.loopchat.app.data.local.LoopChatDatabase.getDatabase(ctx)
                     db.messageDao().insertMessage(message.toEntity())
@@ -305,7 +381,38 @@ class EnhancedChatViewModel : ViewModel() {
                 
                 // Clear reply if replying
                 replyToMessage = null
+                
+                // Send push notification to the other participant (non-blocking)
+                val receiverId = otherParticipant?.id
+                if (receiverId != null) {
+                    viewModelScope.launch {
+                        try {
+                            val accessToken = SupabaseClient.getAccessToken() ?: return@launch
+                            // Get sender's display name
+                            val myProfile = SupabaseRepository.getProfileById(currentUserId).getOrNull()
+                            val senderName = myProfile?.fullName ?: myProfile?.username ?: SupabaseClient.currentEmail ?: "Someone"
+                            httpClient.post("${com.loopchat.app.BuildConfig.SUPABASE_URL}/functions/v1/send-message-notification") {
+                                contentType(ContentType.Application.Json)
+                                header("apikey", com.loopchat.app.BuildConfig.SUPABASE_ANON_KEY)
+                                header("Authorization", "Bearer $accessToken")
+                                setBody(mapOf(
+                                    "senderId" to currentUserId,
+                                    "receiverId" to receiverId,
+                                    "senderName" to senderName,
+                                    "messageContent" to displayContent,
+                                    "messageType" to messageType,
+                                    "conversationId" to conversationId
+                                ))
+                            }
+                        } catch (e: Exception) {
+                            // Non-critical — don't break the message flow
+                            android.util.Log.w("EnhancedChatViewModel", "Push notification failed: ${e.message}")
+                        }
+                    }
+                }
             }.onFailure { e ->
+                // Remove optimistic message on failure
+                messages = messages.filterNot { it.id == tempId }
                 errorMessage = e.message
             }
             
@@ -416,6 +523,175 @@ class EnhancedChatViewModel : ViewModel() {
         }
     }
     
+    // ============================================
+    // ============================================
+    // VOICE MESSAGES
+    // ============================================
+
+    fun sendVoiceMessage(file: java.io.File, durationMs: Long, amplitudes: List<Int>) {
+        val cid = currentConversationId ?: return
+        if (isSending) return
+        
+        isSending = true
+        errorMessage = null
+        
+        viewModelScope.launch {
+            try {
+                // 1. Upload to Storage
+                val fileName = "\${java.util.UUID.randomUUID()}.m4a"
+                val bucket = "voice_messages"
+                val accessToken = com.loopchat.app.data.SupabaseClient.getAccessToken() 
+                    ?: throw Exception("Not authenticated")
+                
+                // Read bytes
+                val fileBytes = file.readBytes()
+                
+                // Standard Ktor upload for Supabase Storage
+                val uploadResponse = httpClient.post("\${com.loopchat.app.BuildConfig.SUPABASE_URL}/storage/v1/object/$bucket/$fileName") {
+                    header("Authorization", "Bearer $accessToken")
+                    contentType(io.ktor.http.ContentType.Audio.MP4)
+                    setBody(fileBytes)
+                }
+                
+                if (!uploadResponse.status.isSuccess()) {
+                    throw Exception("Failed to upload voice recording: \${uploadResponse.status}")
+                }
+                
+                // Get public URL
+                val publicUrl = "\${com.loopchat.app.BuildConfig.SUPABASE_URL}/storage/v1/object/public/$bucket/$fileName"
+                
+                // 2. Prepare Message Payload
+                val amplitudesJson = Json.encodeToString(amplitudes)
+                
+                val currentUserId = com.loopchat.app.data.SupabaseClient.currentUserId ?: throw Exception("No user ID")
+                
+                val requestPayload = mapOf(
+                    "conversation_id" to cid,
+                    "sender_id" to currentUserId,
+                    "content" to "Voice Message", // Fallback text
+                    "message_type" to "voice",
+                    "media_url" to publicUrl,
+                    "media_duration" to durationMs,
+                    "waveform_data" to kotlinx.serialization.json.Json.parseToJsonElement(amplitudesJson)
+                )
+                
+                val response = httpClient.post("\${com.loopchat.app.BuildConfig.SUPABASE_URL}/rest/v1/messages") {
+                    header("Authorization", "Bearer $accessToken")
+                    header("apikey", com.loopchat.app.BuildConfig.SUPABASE_ANON_KEY)
+                    header("Prefer", "return=representation")
+                    contentType(io.ktor.http.ContentType.Application.Json)
+                    setBody(requestPayload)
+                }
+                
+                if (response.status.isSuccess()) {
+                    // Success, cleanup local file
+                    file.delete()
+                    // Realtime will catch the new message and update the UI
+                } else {
+                    errorMessage = "Failed to send voice message: \${response.status}"
+                }
+                
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Failed to process voice message"
+                e.printStackTrace()
+            } finally {
+                isSending = false
+            }
+        }
+    }
+
+    // ============================================
+    // POLLS
+    // ============================================
+
+    fun sendPoll(question: String, options: List<String>, isMultipleChoice: Boolean, isAnonymous: Boolean) {
+        val cid = currentConversationId ?: return
+        if (isSending) return
+        
+        isSending = true
+        errorMessage = null
+        
+        viewModelScope.launch {
+            try {
+                val currentUserId = com.loopchat.app.data.SupabaseClient.currentUserId ?: throw Exception("No user ID")
+                val accessToken = com.loopchat.app.data.SupabaseClient.getAccessToken() ?: throw Exception("Not authenticated")
+                
+                // 1. Create the Message payload
+                val messagePayload = mapOf(
+                    "conversation_id" to cid,
+                    "sender_id" to currentUserId,
+                    "content" to "📊 Poll: $question",
+                    "message_type" to "poll"
+                )
+                
+                val messageResponse = httpClient.post("\${com.loopchat.app.BuildConfig.SUPABASE_URL}/rest/v1/messages") {
+                    header("Authorization", "Bearer $accessToken")
+                    header("apikey", com.loopchat.app.BuildConfig.SUPABASE_ANON_KEY)
+                    header("Prefer", "return=representation")
+                    contentType(io.ktor.http.ContentType.Application.Json)
+                    setBody(messagePayload)
+                }
+                
+                if (!messageResponse.status.isSuccess()) {
+                    throw Exception("Failed to send poll message: \${messageResponse.status}")
+                }
+                
+                // Parse the returned message to get the ID
+                val messageList = messageResponse.body<List<com.loopchat.app.data.models.Message>>()
+                val newMessageId = messageList.firstOrNull()?.id ?: throw Exception("Message ID not returned")
+                
+                // 2. Create the Poll record
+                val pollPayload = mapOf(
+                    "message_id" to newMessageId,
+                    "question" to question,
+                    "is_multiple_choice" to isMultipleChoice,
+                    "is_anonymous" to isAnonymous
+                )
+                
+                val pollResponse = httpClient.post("\${com.loopchat.app.BuildConfig.SUPABASE_URL}/rest/v1/polls") {
+                    header("Authorization", "Bearer $accessToken")
+                    header("apikey", com.loopchat.app.BuildConfig.SUPABASE_ANON_KEY)
+                    header("Prefer", "return=representation")
+                    contentType(io.ktor.http.ContentType.Application.Json)
+                    setBody(pollPayload)
+                }
+                
+                if (!pollResponse.status.isSuccess()) {
+                    throw Exception("Failed to create poll record")
+                }
+                
+                val pollList = pollResponse.body<List<Map<String, Any>>>()
+                val pollId = pollList.firstOrNull()?.get("id")?.toString() ?: throw Exception("Poll ID not returned")
+                
+                // 3. Create the Poll Options
+                val optionsPayload = options.map { optionText ->
+                    mapOf(
+                        "poll_id" to pollId,
+                        "option_text" to optionText
+                    )
+                }
+                
+                val optionsResponse = httpClient.post("\${com.loopchat.app.BuildConfig.SUPABASE_URL}/rest/v1/poll_options") {
+                    header("Authorization", "Bearer $accessToken")
+                    header("apikey", com.loopchat.app.BuildConfig.SUPABASE_ANON_KEY)
+                    // No need for return=representation here unless we need the IDs immediately
+                    contentType(io.ktor.http.ContentType.Application.Json)
+                    setBody(optionsPayload)
+                }
+                
+                if (!optionsResponse.status.isSuccess()) {
+                    throw Exception("Failed to create poll options")
+                }
+                
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Failed to create poll"
+                e.printStackTrace()
+            } finally {
+                isSending = false
+            }
+        }
+    }
+
     // ============================================
     // FORWARD MESSAGES
     // ============================================

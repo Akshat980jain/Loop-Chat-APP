@@ -38,8 +38,8 @@ fun ReactionPicker(
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(24.dp),
-        color = Surface,
-        shadowElevation = 8.dp
+        color = SurfaceContainerHigh,
+        shadowElevation = 0.dp
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
@@ -50,7 +50,7 @@ fun ReactionPicker(
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .background(SurfaceVariant)
+                        .background(SurfaceContainerHighest)
                         .clickable {
                             onReactionSelected(emoji)
                             onDismiss()
@@ -75,15 +75,15 @@ fun MessageReactions(
     reactions: Map<String, List<String>>, // emoji -> list of user IDs
     currentUserId: String,
     onReactionClick: (String) -> Unit,
+    onAddReaction: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    if (reactions.isEmpty()) return
-    
-    LazyRow(
+    Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        items(reactions.entries.toList()) { (emoji, userIds) ->
+        reactions.entries.forEach { (emoji, userIds) ->
             val hasReacted = currentUserId in userIds
             
             Surface(
@@ -115,6 +115,24 @@ fun MessageReactions(
                 }
             }
         }
+        
+        // Add reaction button
+        Surface(
+            shape = CircleShape,
+            color = SurfaceVariant,
+            modifier = Modifier
+                .size(24.dp)
+                .clickable { onAddReaction() }
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = "Add reaction",
+                    modifier = Modifier.size(16.dp),
+                    tint = TextSecondary
+                )
+            }
+        }
     }
 }
 
@@ -130,8 +148,8 @@ fun ReplyPreview(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = SurfaceVariant,
-        tonalElevation = 2.dp
+        color = SurfaceContainerHigh,
+        tonalElevation = 0.dp
     ) {
         Row(
             modifier = Modifier
@@ -245,8 +263,8 @@ fun MessageActionMenu(
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
-        color = Surface,
-        shadowElevation = 8.dp
+        color = SurfaceContainerHigh,
+        shadowElevation = 0.dp
     ) {
         Column(
             modifier = Modifier.padding(vertical = 8.dp)
@@ -293,7 +311,8 @@ fun MessageActionMenu(
                 )
             }
             
-            Divider(modifier = Modifier.padding(vertical = 4.dp))
+            // Ghost separator
+            Spacer(modifier = Modifier.height(4.dp))
             
             // Delete for me
             MessageMenuItem(
@@ -340,13 +359,13 @@ private fun MessageMenuItem(
         Icon(
             imageVector = icon,
             contentDescription = text,
-            tint = if (isDestructive) Error else TextPrimary,
+            tint = if (isDestructive) ErrorColor else TextPrimary,
             modifier = Modifier.size(24.dp)
         )
         Text(
             text = text,
             style = MaterialTheme.typography.bodyMedium,
-            color = if (isDestructive) Error else TextPrimary
+            color = if (isDestructive) ErrorColor else TextPrimary
         )
     }
 }
@@ -451,21 +470,23 @@ fun ForwardedIndicator(
 @Composable
 fun MessageStatusIcon(
     status: MessageStatus,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    tint: androidx.compose.ui.graphics.Color = TextMuted,
+    readTint: androidx.compose.ui.graphics.Color = Primary
 ) {
     when (status) {
         MessageStatus.SENDING -> {
             CircularProgressIndicator(
                 modifier = modifier.size(14.dp),
                 strokeWidth = 2.dp,
-                color = TextMuted
+                color = tint
             )
         }
         MessageStatus.SENT -> {
             Icon(
                 Icons.Default.Check,
                 contentDescription = "Sent",
-                tint = TextMuted,
+                tint = tint,
                 modifier = modifier.size(16.dp)
             )
         }
@@ -473,7 +494,7 @@ fun MessageStatusIcon(
             Icon(
                 Icons.Default.DoneAll,
                 contentDescription = "Delivered",
-                tint = TextMuted,
+                tint = tint,
                 modifier = modifier.size(16.dp)
             )
         }
@@ -481,7 +502,7 @@ fun MessageStatusIcon(
             Icon(
                 Icons.Default.DoneAll,
                 contentDescription = "Read",
-                tint = Primary,
+                tint = readTint,
                 modifier = modifier.size(16.dp)
             )
         }

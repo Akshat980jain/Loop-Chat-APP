@@ -102,7 +102,7 @@ fun SearchDialog(
                     }
                 } else if (!errorMessage.isNullOrEmpty()) {
                     Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text(errorMessage, color = Error, style = MaterialTheme.typography.bodyMedium)
+                        Text(errorMessage, color = ErrorColor, style = MaterialTheme.typography.bodyMedium)
                     }
                 } else {
                     LazyColumn(

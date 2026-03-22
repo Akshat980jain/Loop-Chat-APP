@@ -71,6 +71,9 @@ class IncomingCallActivity : ComponentActivity() {
         
         Log.d(TAG, "Incoming call from: $callerName, type: $callType")
         
+        // Start the call service to ensure ringtone plays (safe from foreground Activity)
+        startCallServiceForRingtone()
+        
         // Configure window for lock screen display
         setupWindowFlags()
         
@@ -137,7 +140,11 @@ class IncomingCallActivity : ComponentActivity() {
             putExtra(CallService.EXTRA_ROOM_URL, roomUrl)
             putExtra(CallService.EXTRA_CALLEE_TOKEN, calleeToken)
         }
-        startService(serviceIntent)
+        try {
+            startForegroundService(serviceIntent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start service for accept: ${e.message}")
+        }
         
         // Close this activity - CallService will launch MainActivity with call screen
         finish()
@@ -154,11 +161,35 @@ class IncomingCallActivity : ComponentActivity() {
             action = CallService.ACTION_REJECT_CALL
             putExtra(CallService.EXTRA_CALL_ID, callId)
         }
-        startService(serviceIntent)
+        try {
+            startForegroundService(serviceIntent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start service for reject: ${e.message}")
+        }
         
         finish()
     }
     
+    /**
+     * Start the call service to handle ringtone and foreground notification
+     */
+    private fun startCallServiceForRingtone() {
+        val intent = Intent(this, CallService::class.java).apply {
+            action = CallService.ACTION_INCOMING_CALL
+            putExtra(CallService.EXTRA_CALL_ID, callId)
+            putExtra(CallService.EXTRA_CALLER_ID, callerId)
+            putExtra(CallService.EXTRA_CALLER_NAME, callerName)
+            putExtra(CallService.EXTRA_CALL_TYPE, callType)
+            putExtra(CallService.EXTRA_ROOM_URL, roomUrl)
+            putExtra(CallService.EXTRA_CALLEE_TOKEN, calleeToken)
+        }
+        try {
+            startForegroundService(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start service for ringtone: ${e.message}")
+        }
+    }
+
     override fun onBackPressed() {
         // Don't allow back button to dismiss incoming call
         // User must explicitly accept or reject
@@ -332,7 +363,7 @@ fun IncomingCallScreen(
                         modifier = Modifier
                             .size(72.dp)
                             .clip(CircleShape)
-                            .background(Error),
+                            .background(ErrorColor),
                         contentAlignment = Alignment.Center
                     ) {
                         IconButton(
@@ -403,7 +434,7 @@ fun LoopChatTheme(content: @Composable () -> Unit) {
             secondary = Secondary,
             background = Background,
             surface = Surface,
-            error = Error
+            error = ErrorColor
         ),
         typography = Typography,
         content = content

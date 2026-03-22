@@ -1,61 +1,72 @@
 package com.loopchat.app.ui.theme
 
 import android.app.Activity
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 
-// Sunset Vibes Dark Color Scheme
-private val SunsetDarkColorScheme = darkColorScheme(
+// Electric Noir Dark Color Scheme — Stitch Design System
+// Note: surfaceContainer*, surfaceBright, surfaceDim are used directly from Color.kt
+// but not passed to darkColorScheme() since Compose BOM 2023.10.01 doesn't support them.
+private val ElectricNoirColorScheme = darkColorScheme(
     primary = Primary,
+    onPrimary = OnPrimary,
+    primaryContainer = PrimaryContainer,
+    onPrimaryContainer = OnPrimaryContainer,
     secondary = Secondary,
-    tertiary = SecondaryDark,
+    onSecondary = OnSecondary,
+    secondaryContainer = SecondaryContainer,
+    tertiary = Tertiary,
+    onTertiary = OnTertiary,
+    tertiaryContainer = TertiaryContainer,
     background = Background,
-    surface = Surface,
-    surfaceVariant = SurfaceVariant,
-    onPrimary = TextPrimary,
-    onSecondary = TextPrimary,
-    onTertiary = TextPrimary,
     onBackground = TextPrimary,
+    surface = Surface,
     onSurface = TextPrimary,
+    surfaceVariant = SurfaceVariant,
     onSurfaceVariant = TextSecondary,
-    error = Error,
-    onError = TextPrimary,
-    errorContainer = Error.copy(alpha = 0.2f),
-    onErrorContainer = Error
+    surfaceTint = SurfaceTint,
+    inversePrimary = InversePrimary,
+    inverseSurface = InverseSurface,
+    inverseOnSurface = InverseOnSurface,
+    error = ErrorColor,
+    onError = OnError,
+    errorContainer = ErrorContainer,
+    onErrorContainer = OnErrorContainer,
+    outline = Outline,
+    outlineVariant = OutlineVariant
 )
 
-// Custom shapes for premium look
+// Shapes — ROUND_EIGHT base with premium large-radius cards
 val PremiumShapes = Shapes(
     extraSmall = RoundedCornerShape(4.dp),
-    small = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(8.dp),      // ROUND_EIGHT base
     medium = RoundedCornerShape(12.dp),
     large = RoundedCornerShape(16.dp),
-    extraLarge = RoundedCornerShape(24.dp)
+    extraLarge = RoundedCornerShape(24.dp)  // Cards & modals
 )
 
 @Composable
 fun LoopChatTheme(
-    darkTheme: Boolean = true, // Always use dark theme (Sunset Vibes)
+    darkTheme: Boolean = true, // Always dark — Electric Noir
     content: @Composable () -> Unit
 ) {
-    val colorScheme = SunsetDarkColorScheme
+    val colorScheme = ElectricNoirColorScheme
     val view = LocalView.current
-    
+
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.background.toArgb()
-            window.navigationBarColor = colorScheme.surface.toArgb()
+            window.statusBarColor = android.graphics.Color.TRANSPARENT
+            window.navigationBarColor = android.graphics.Color.TRANSPARENT
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
+            WindowCompat.getInsetsController(window, view).isAppearanceLightNavigationBars = false
         }
     }
 

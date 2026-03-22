@@ -44,6 +44,14 @@ fun CameraPreview(
         cameraProvider = context.getCameraProvider()
     }
     
+    // Explicitly release camera hardware when preview is removed from the composition
+    DisposableEffect(cameraProvider) {
+        onDispose {
+            cameraProvider?.unbindAll()
+            Log.d(TAG, "CameraPreview disposed. Hardware lock released.")
+        }
+    }
+    
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(16.dp))

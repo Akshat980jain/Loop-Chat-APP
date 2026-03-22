@@ -71,6 +71,22 @@ object SupabaseRealtimeClient {
                     val joinPayload = buildJoinPayload(conversationId, accessToken, currentUserId)
                     send(Frame.Text(joinPayload))
 
+                    // Small delay to ensure joined state before tracking presence
+                    delay(200)
+
+                    val trackPayload = """
+                        {
+                          "topic": "realtime:public:messages:conversation_id=eq.$conversationId",
+                          "event": "presence",
+                          "payload": {
+                            "type": "track",
+                            "payload": {}
+                          },
+                          "ref": "track_init"
+                        }
+                    """.trimIndent()
+                    send(Frame.Text(trackPayload))
+
                     // 2. Start Heartbeat
                     startHeartbeat()
 

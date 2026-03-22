@@ -12,6 +12,7 @@ import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.IBinder
+import android.content.pm.ServiceInfo
 import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -128,7 +129,15 @@ class CallService : Service() {
         
         // Start as foreground with incoming call notification
         val notification = createIncomingCallNotification(callId, callerId, callerName, callType, roomUrl)
-        startForeground(NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID, 
+                notification, 
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
         
         // Start ringtone and vibration
         startRingtone()
@@ -242,7 +251,16 @@ class CallService : Service() {
             roomUrl = roomUrl,
             calleeToken = calleeToken
         )
-        startForeground(NOTIFICATION_ID, notification)
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID, 
+                notification, 
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
     
     /**
@@ -277,7 +295,7 @@ class CallService : Service() {
             putExtra(EXTRA_CALL_TYPE, callType)
             putExtra(EXTRA_ROOM_URL, roomUrl)
         }
-        val acceptPendingIntent = PendingIntent.getService(
+        val acceptPendingIntent = PendingIntent.getForegroundService(
             this, 1, acceptIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -287,7 +305,7 @@ class CallService : Service() {
             action = ACTION_REJECT_CALL
             putExtra(EXTRA_CALL_ID, callId)
         }
-        val rejectPendingIntent = PendingIntent.getService(
+        val rejectPendingIntent = PendingIntent.getForegroundService(
             this, 2, rejectIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -351,7 +369,7 @@ class CallService : Service() {
         val endIntent = Intent(this, CallService::class.java).apply {
             action = ACTION_END_CALL
         }
-        val endPendingIntent = PendingIntent.getService(
+        val endPendingIntent = PendingIntent.getForegroundService(
             this, 3, endIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
