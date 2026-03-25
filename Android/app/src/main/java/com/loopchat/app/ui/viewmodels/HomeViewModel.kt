@@ -60,6 +60,9 @@ class HomeViewModel : ViewModel() {
     var isCreatingConversation by mutableStateOf(false)
         private set
     
+    var isSyncingContacts by mutableStateOf(false)
+        private set
+    
     // Phase 2: Privacy & Organization state
     var archivedConversations by mutableStateOf<List<String>>(emptyList())
         private set
@@ -228,6 +231,31 @@ class HomeViewModel : ViewModel() {
             }
             
             isAddingContact = false
+        }
+    }
+    
+    fun syncDeviceContacts(context: Context) {
+        viewModelScope.launch {
+            isSyncingContacts = true
+            errorMessage = null
+            
+            val result = com.loopchat.app.data.ContactSyncRepository.syncContacts(context)
+            result.onSuccess { matchedContacts ->
+                // Now add each matched contact as a friend in our system
+                var successCount = 0
+                for (contact in matchedContacts) {
+                    if (contact.userId != null) {
+                        val addResult = SupabaseRepository.addContact(contact.userId)
+                        if (addResult.isSuccess) successCount++
+                    }
+                }
+                loadContacts() // Refresh list
+                errorMessage = if (successCount > 0) null else "No new contacts found"
+            }.onFailure { e ->
+                errorMessage = "Failed to sync contacts: ${e.message}"
+            }
+            
+            isSyncingContacts = false
         }
     }
     

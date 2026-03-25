@@ -542,6 +542,74 @@ class EnhancedChatViewModel : ViewModel() {
     }
     
     // ============================================
+    // FORWARD MESSAGES
+    // ============================================
+    
+    var forwardTargets by mutableStateOf<List<com.loopchat.app.ui.components.ForwardTarget>>(emptyList())
+        private set
+    
+    fun loadConversationsForForward() {
+        viewModelScope.launch {
+            try {
+                val accessToken = SupabaseClient.getAccessToken() ?: return@launch
+                val userId = SupabaseClient.currentUserId ?: return@launch
+                val supabaseUrl = com.loopchat.app.BuildConfig.SUPABASE_URL
+                val supabaseKey = com.loopchat.app.BuildConfig.SUPABASE_ANON_KEY
+                
+                // Get conversation IDs for current user
+                val participantResponse = httpClient.get("$supabaseUrl/rest/v1/conversation_participants") {
+                    parameter("select", "conversation_id")
+                    parameter("user_id", "eq.$userId")
+                    header("apikey", supabaseKey)
+                    header("Authorization", "Bearer $accessToken")
+                }
+                
+                if (participantResponse.status.isSuccess()) {
+                    val participants: List<Map<String, String>> = participantResponse.body()
+                    val convIds = participants.mapNotNull { it["conversation_id"] }
+                    
+                    if (convIds.isNotEmpty()) {
+                        val idsParam = convIds.joinToString(",")
+                        val convsResponse = httpClient.get("$supabaseUrl/rest/v1/conversations") {
+                            parameter("select", "id,name,is_group,avatar_url")
+                            parameter("id", "in.($idsParam)")
+                            header("apikey", supabaseKey)
+                            header("Authorization", "Bearer $accessToken")
+                        }
+                        
+                        if (convsResponse.status.isSuccess()) {
+                            val convs: List<com.loopchat.app.data.models.Conversation> = convsResponse.body()
+                            forwardTargets = convs
+                                .filter { it.id != currentConversationId }
+                                .map { conv ->
+                                    com.loopchat.app.ui.components.ForwardTarget(
+                                        conversationId = conv.id,
+                                        name = conv.name ?: "Chat",
+                                        avatarUrl = conv.avatarUrl,
+                                        isGroup = conv.isGroup
+                                    )
+                                }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                errorMessage = "Failed to load conversations: ${e.message}"
+            }
+        }
+    }
+    
+    fun forwardMessage(messageId: String, targetConversationIds: List<String>) {
+        viewModelScope.launch {
+            val result = MessagingFeaturesRepository.forwardMessage(httpClient, messageId, targetConversationIds)
+            result.onSuccess {
+                errorMessage = null
+            }
+            result.onFailure {
+                errorMessage = "Failed to forward: ${it.message}"
+            }
+        }
+    }
+    
     // ============================================
     // VOICE MESSAGES
     // ============================================

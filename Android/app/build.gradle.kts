@@ -4,6 +4,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
     id("com.google.devtools.ksp")
     id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
 }
 
 import java.util.Properties
@@ -39,10 +40,21 @@ android {
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
         buildConfigField("String", "DAILY_ROOM_URL", "\"https://lopp.daily.co/LoopChat\"")
     }
+    signingConfigs {
+        create("release") {
+            // Safe fallback properties if env vars aren't present (e.g. for CI build environments)
+            storeFile = file(System.getenv("KEYSTORE_FILE") ?: "keystore.jks")
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "password"
+            keyAlias = System.getenv("KEY_ALIAS") ?: "alias"
+            keyPassword = System.getenv("KEY_PASSWORD") ?: "password"
+        }
+    }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -126,9 +138,11 @@ dependencies {
     // Accompanist for permissions
     implementation("com.google.accompanist:accompanist-permissions:0.32.0")
     
-    // Firebase Cloud Messaging for VoIP push notifications
+    // Firebase Cloud Messaging, Analytics, Crashlytics
     implementation(platform("com.google.firebase:firebase-bom:32.7.0"))
     implementation("com.google.firebase:firebase-messaging-ktx")
+    implementation("com.google.firebase:firebase-analytics-ktx")
+    implementation("com.google.firebase:firebase-crashlytics-ktx")
     
     // Testing
     testImplementation("junit:junit:4.13.2")

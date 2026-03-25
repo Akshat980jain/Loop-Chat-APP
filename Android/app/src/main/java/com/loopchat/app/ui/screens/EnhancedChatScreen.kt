@@ -98,6 +98,8 @@ fun EnhancedChatScreen(
     ) { uri -> uri?.let { chatViewModel.onMediaSelected(it, "document") } }
     
     var showPollComposer by remember { mutableStateOf(false) }
+    var showForwardDialog by remember { mutableStateOf(false) }
+    var forwardingMessageId by remember { mutableStateOf<String?>(null) }
 
     // Start background tasks
     LaunchedEffect(conversationId) {
@@ -876,8 +878,9 @@ fun EnhancedChatScreen(
                     selectedMessageForMenu = null
                 },
                 onForward = {
-                    // TODO: Implement forward dialog with conversation selection
-                    // For now, just dismiss
+                    forwardingMessageId = selectedMessageForMenu!!.id
+                    chatViewModel.loadConversationsForForward()
+                    showForwardDialog = true
                     showMessageMenu = false
                     selectedMessageForMenu = null
                 },
@@ -921,6 +924,23 @@ fun EnhancedChatScreen(
             )
         }
     }
+    
+    // Forward message dialog
+    if (showForwardDialog && forwardingMessageId != null) {
+        com.loopchat.app.ui.components.ForwardMessageDialog(
+            conversations = chatViewModel.forwardTargets,
+            onForward = { selectedIds ->
+                chatViewModel.forwardMessage(forwardingMessageId!!, selectedIds)
+                showForwardDialog = false
+                forwardingMessageId = null
+            },
+            onDismiss = {
+                showForwardDialog = false
+                forwardingMessageId = null
+            }
+        )
+    }
+
     
     // Full-screen image viewer dialog
     if (showImageViewer && viewerMediaUrl.isNotEmpty()) {

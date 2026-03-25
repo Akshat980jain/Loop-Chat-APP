@@ -110,6 +110,7 @@ sealed class Screen(val route: String) {
     object AddGroupMember : Screen("add_group_member/{groupId}") {
         fun createRoute(groupId: String) = "add_group_member/$groupId"
     }
+    object StarredMessages : Screen("starred_messages")
 }
 
 @Composable
@@ -485,8 +486,34 @@ fun LoopChatNavigation(
             )
         }
         
+        composable(Screen.QRScan.route) {
+            com.loopchat.app.ui.screens.QRScanScreen(
+                onBackClick = { navController.popBackStack() },
+                onUserScanned = { targetUserId ->
+                    // Pop the QR screen, then create chat
+                    navController.popBackStack()
+                    // Navigate to conversation, but we only have userId here.
+                    // LoopChat logic in HomeViewModel can handle mapping, but we don't have VM here easily.
+                    // For now, let's navigate to home where they can search that ID, 
+                    // or trigger createConversation directly if we had a shared ViewModel.
+                    // The easiest: open auth-like flow or just pass it back to home if we could.
+                    // Let's rely on Home searching for now since we're in Navigation.
+                    // To do it correctly, we should add it as contact.
+                    kotlinx.coroutines.GlobalScope.launch {
+                        com.loopchat.app.data.SupabaseRepository.addContact(targetUserId)
+                    }
+                }
+            )
+        }
+        
         composable(Screen.Status.route) {
             StatusScreen(
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+        
+        composable(Screen.StarredMessages.route) {
+            com.loopchat.app.ui.screens.StarredMessagesScreen(
                 onBackClick = { navController.popBackStack() }
             )
         }

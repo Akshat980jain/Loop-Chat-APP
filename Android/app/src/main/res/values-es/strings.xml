@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Loop Chat</string>
+    <!-- Common -->
+    <string name="common_cancel">Cancelar</string>
+    <string name="common_save">Guardar</string>
+    <string name="common_delete">Eliminar</string>
+    <string name="common_search">Buscar</string>
+
+    <!-- Navigation -->
+    <string name="nav_chats">Chats</string>
+    <string name="nav_calls">Llamadas</string>
+    <string name="nav_contacts">Contactos</string>
+    <string name="nav_settings">Ajustes</string>
+
+    <!-- Home Tab -->
+    <string name="home_find_friends">Buscar amigos</string>
+    <string name="home_sync_phone">Sincroniza tus contactos</string>
+    <string name="home_no_chats">Aún no hay conversaciones</string>
+    
+    <!-- Action Menu -->
+    <string name="action_forward">Reenviar</string>
+    <string name="action_star">Destacar</string>
+    <string name="action_unstar">No destacar</string>
+    <string name="action_reply">Responder</string>
+    
+    <!-- Settings -->
+    <string name="settings_account">Cuenta</string>
+    <string name="settings_qr_code">Código QR</string>
+    <string name="settings_qr_desc">Escanea o muestra tu código Loop Chat</string>
+</resources>

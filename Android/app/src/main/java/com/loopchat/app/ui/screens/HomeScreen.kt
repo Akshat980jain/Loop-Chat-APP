@@ -320,7 +320,8 @@ fun HomeScreen(
                                     onConversationClick(conversationId)
                                 }
                             }
-                        }
+                        },
+                        viewModel = viewModel
                     )
                     3 -> SettingsTab(
                         onProfileClick = onProfileClick,
@@ -1032,32 +1033,89 @@ private fun formatTimeAgo(timestamp: String): String {
 private fun ContactsTab(
     contacts: List<ContactWithProfile>,
     isLoading: Boolean,
-    onContactClick: (ContactWithProfile) -> Unit
+    onContactClick: (ContactWithProfile) -> Unit,
+    viewModel: HomeViewModel
 ) {
-    if (isLoading) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            CircularProgressIndicator(color = Primary)
+    val context = LocalContext.current
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            viewModel.syncDeviceContacts(context)
+        } else {
+            // Permission denied
         }
-    } else if (contacts.isEmpty()) {
-        EmptyState(
-            icon = Icons.Default.Contacts,
-            message = "No contacts yet",
-            subtitle = "Search for users to add contacts"
-        )
-    } else {
-        LazyColumn(
-            modifier = Modifier.padding(horizontal = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(vertical = 8.dp)
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Find Friends button
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .clickable {
+                    if (androidx.core.content.ContextCompat.checkSelfPermission(
+                            context,
+                            android.Manifest.permission.READ_CONTACTS
+                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    ) {
+                        viewModel.syncDeviceContacts(context)
+                    } else {
+                        permissionLauncher.launch(android.Manifest.permission.READ_CONTACTS)
+                    }
+                },
+            color = SurfaceContainerHighest,
+            shape = RoundedCornerShape(16.dp)
         ) {
-            items(contacts) { contact ->
-                ContactItem(
-                    contact = contact,
-                    onClick = { onContactClick(contact) }
-                )
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Primary.copy(alpha = 0.1f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (viewModel.isSyncingContacts) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Primary, strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Contacts, contentDescription = null, tint = Primary)
+                    }
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Column {
+                    Text("Find Friends", style = MaterialTheme.typography.titleMedium, color = TextPrimary, fontWeight = FontWeight.Bold)
+                    Text("Sync your phone contacts", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                }
+            }
+        }
+
+        if (isLoading) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(color = Primary)
+            }
+        } else if (contacts.isEmpty()) {
+            EmptyState(
+                icon = Icons.Default.Contacts,
+                message = "No contacts yet",
+                subtitle = "Search for users or sync your phone book"
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.padding(horizontal = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                items(contacts) { contact ->
+                    ContactItem(
+                        contact = contact,
+                        onClick = { onContactClick(contact) }
+                    )
+                }
             }
         }
     }
@@ -1674,6 +1732,14 @@ fun SettingsTab(
         // Account Section
         item {
             SettingsSection(title = "Account")
+        }
+        item {
+            SettingsItem(
+                icon = Icons.Default.QrCode,
+                title = "QR Code",
+                subtitle = "Scan or show your Loop Chat code",
+                onClick = { onNavigate("qr_scan") }
+            )
         }
         item {
             SettingsItem(
