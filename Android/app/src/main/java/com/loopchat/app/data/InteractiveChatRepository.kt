@@ -5,6 +5,9 @@ import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.put
 
 /**
  * Repository for Phase 3: Interactive Chat Features
@@ -44,12 +47,12 @@ object InteractiveChatRepository {
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
                 header("Prefer", "return=representation")
-                setBody(mapOf(
-                    "conversation_id" to conversationId,
-                    "sender_id" to senderId,
-                    "content" to "📊 Poll: $question",
-                    "message_type" to "poll"
-                ))
+                setBody(buildJsonObject {
+                    put("conversation_id", conversationId)
+                    put("sender_id", senderId)
+                    put("content", "📊 Poll: $question")
+                    put("message_type", "poll")
+                })
             }
 
             if (!messageResponse.status.isSuccess()) {
@@ -65,11 +68,11 @@ object InteractiveChatRepository {
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
                 header("Prefer", "return=representation")
-                setBody(mapOf(
-                    "message_id" to messageId,
-                    "question" to question,
-                    "multiple_answers" to multipleAnswers
-                ))
+                setBody(buildJsonObject {
+                    put("message_id", messageId)
+                    put("question", question)
+                    put("multiple_answers", multipleAnswers)
+                })
             }
 
             if (!pollResponse.status.isSuccess()) {
@@ -81,12 +84,14 @@ object InteractiveChatRepository {
             val savedPoll = polls.first()
 
             // 3. Create the options
-            val optionsPayload = options.mapIndexed { index, text ->
-                mapOf(
-                    "poll_id" to savedPoll.id,
-                    "option_text" to text,
-                    "order_index" to index
-                )
+            val optionsPayload = buildJsonArray {
+                options.forEachIndexed { index, text ->
+                    add(buildJsonObject {
+                        put("poll_id", savedPoll.id)
+                        put("option_text", text)
+                        put("order_index", index)
+                    })
+                }
             }
 
             val optionsResponse = httpClient.post("$supabaseUrl/rest/v1/poll_options") {
@@ -170,10 +175,10 @@ object InteractiveChatRepository {
                     contentType(ContentType.Application.Json)
                     header("apikey", supabaseKey)
                     header("Authorization", "Bearer $accessToken")
-                    setBody(mapOf(
-                        "option_id" to optionId,
-                        "user_id" to userId
-                    ))
+                    setBody(buildJsonObject {
+                        put("option_id", optionId)
+                        put("user_id", userId)
+                    })
                 }
             }
             Result.success(Unit)
