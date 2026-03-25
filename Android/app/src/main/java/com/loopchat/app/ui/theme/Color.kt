@@ -91,6 +91,7 @@ val AvatarBorderGradient = listOf(
 )
 
 // Legacy / Utility colors
+val Accent = Primary
 val Success = Color(0xFF00E676)
 val Info = Color(0xFF29B6F6)
 val Purple40 = Color(0xFF6650a4)

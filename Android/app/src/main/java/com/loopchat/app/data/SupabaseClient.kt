@@ -30,8 +30,8 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
  * Uses Ktor HTTP client for REST API calls to Supabase Auth
  */
 object SupabaseClient {
-    private val supabaseUrl = BuildConfig.SUPABASE_URL
-    private val supabaseKey = BuildConfig.SUPABASE_ANON_KEY
+    val supabaseUrl = BuildConfig.SUPABASE_URL
+    val supabaseKey = BuildConfig.SUPABASE_ANON_KEY
     
     private val json = Json {
         ignoreUnknownKeys = true

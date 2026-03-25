@@ -22,6 +22,7 @@ import com.loopchat.app.ui.screens.AuthScreen
 import com.loopchat.app.ui.screens.CallHistoryScreen
 import com.loopchat.app.ui.screens.CallScreen
 import com.loopchat.app.ui.screens.EnhancedChatScreen
+import com.loopchat.app.ui.screens.GroupCreationScreen
 import com.loopchat.app.ui.screens.HomeScreen
 import com.loopchat.app.ui.screens.IncomingCallScreen
 import com.loopchat.app.ui.screens.ProfileScreen
@@ -45,6 +46,12 @@ import com.loopchat.app.ui.screens.StatusScreen
 import com.loopchat.app.ui.screens.MediaGalleryScreen
 import com.loopchat.app.ui.screens.QRScanScreen
 import com.loopchat.app.ui.screens.BlockedContactsScreen
+import com.loopchat.app.ui.screens.GroupInfoScreen
+import com.loopchat.app.ui.viewmodels.GroupInfoViewModel
+import com.loopchat.app.ui.screens.AddGroupMemberScreen
+import com.loopchat.app.ui.viewmodels.AddGroupMemberViewModel
+import com.loopchat.app.data.local.LoopChatDatabase
+import com.loopchat.app.data.GroupRepository
 
 sealed class Screen(val route: String) {
     object Auth : Screen("auth")
@@ -89,10 +96,20 @@ sealed class Screen(val route: String) {
     // Phase 4: New Screens
     object Search : Screen("search")
     object Notifications : Screen("notifications")
+    object NotificationHistory : Screen("notification_history")
     object Status : Screen("status")
-    object MediaGallery : Screen("media_gallery")
+    object MediaGallery : Screen("media_gallery/{conversationId}") {
+        fun createRoute(conversationId: String) = "media_gallery/$conversationId"
+    }
     object QRScan : Screen("qr_scan")
     object BlockedContacts : Screen("blocked_contacts")
+    object GroupCreation : Screen("group_creation")
+    object GroupInfo : Screen("group_info/{groupId}") {
+        fun createRoute(groupId: String) = "group_info/$groupId"
+    }
+    object AddGroupMember : Screen("add_group_member/{groupId}") {
+        fun createRoute(groupId: String) = "add_group_member/$groupId"
+    }
 }
 
 @Composable
@@ -119,6 +136,19 @@ fun LoopChatNavigation(
         // If already authenticated, start listening for incoming calls
         if (isAuthenticated) {
             IncomingCallManager.startListening(context)
+            
+            // Re-upload FCM token to ensure backend has the latest one
+            try {
+                com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                    if (task.isSuccessful) {
+                        launch(kotlinx.coroutines.Dispatchers.IO) { 
+                            SupabaseClient.updateFcmToken(task.result) 
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("Navigation", "Failed to retrieve FCM token", e)
+            }
         }
     }
     
@@ -243,8 +273,14 @@ fun LoopChatNavigation(
                 onCallClick = { calleeId, callType ->
                     navController.navigate(Screen.Call.createRoute(calleeId, callType))
                 },
-                onNavigateToProfile = {
-                    navController.navigate(Screen.Profile.route)
+                onNavigateToProfile = { userId ->
+                    navController.navigate("profile/$userId")
+                },
+                onNavigateToGroupInfo = { cid ->
+                    navController.navigate(Screen.GroupInfo.createRoute(cid))
+                },
+                onNavigateToMediaGallery = { cid ->
+                    navController.navigate(Screen.MediaGallery.createRoute(cid))
                 }
             )
         }
@@ -440,27 +476,109 @@ fun LoopChatNavigation(
             )
         }
         
+        composable(Screen.NotificationHistory.route) {
+            com.loopchat.app.ui.screens.NotificationHistoryScreen(
+                onBackClick = { navController.popBackStack() },
+                onNavigateAction = { contextId ->
+                    navController.navigate(Screen.Chat.createRoute(contextId))
+                }
+            )
+        }
+        
         composable(Screen.Status.route) {
             StatusScreen(
                 onBackClick = { navController.popBackStack() }
             )
         }
         
-        composable(Screen.MediaGallery.route) {
+        composable(
+            route = Screen.MediaGallery.route,
+            arguments = listOf(navArgument("conversationId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val conversationId = backStackEntry.arguments?.getString("conversationId") ?: ""
             MediaGalleryScreen(
+                conversationId = conversationId,
                 onBackClick = { navController.popBackStack() }
             )
         }
         
         composable(Screen.QRScan.route) {
             QRScanScreen(
-                onBackClick = { navController.popBackStack() }
+                onBackClick = { navController.popBackStack() },
+                onUserScanned = { userId ->
+                    navController.navigate(Screen.Profile.route)
+                }
             )
         }
         
         composable(Screen.BlockedContacts.route) {
             BlockedContactsScreen(
                 onBackClick = { navController.popBackStack() }
+            )
+        }
+        
+        composable(Screen.GroupCreation.route) {
+            GroupCreationScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onGroupCreated = { conversationId ->
+                    navController.navigate(Screen.Chat.createRoute(conversationId)) {
+                        popUpTo(Screen.Home.route) { inclusive = false }
+                    }
+                }
+            )
+        }
+        // New Group Info Screen
+        composable(
+            route = Screen.GroupInfo.route,
+            arguments = listOf(navArgument("groupId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val groupId = backStackEntry.arguments?.getString("groupId") ?: return@composable
+            val db = LoopChatDatabase.getDatabase(LocalContext.current)
+            val groupRepository = GroupRepository(db)
+            val groupInfoViewModel: GroupInfoViewModel = viewModel(
+                factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+                    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                        return GroupInfoViewModel(groupRepository) as T
+                    }
+                }
+            )
+            
+            GroupInfoScreen(
+                groupId = groupId,
+                viewModel = groupInfoViewModel,
+                onBackClick = { navController.popBackStack() },
+                onAddMemberClick = { navController.navigate(Screen.AddGroupMember.createRoute(groupId)) },
+                onMemberClick = { userId ->
+                    // For group members, we navigate to their profile
+                    navController.navigate("profile/$userId")
+                }
+            )
+        }
+        
+        // Add Group Member Screen (Contact Selection for existing group)
+        composable(
+            route = Screen.AddGroupMember.route,
+            arguments = listOf(navArgument("groupId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val groupId = backStackEntry.arguments?.getString("groupId") ?: return@composable
+            val db = LoopChatDatabase.getDatabase(LocalContext.current)
+            val groupRepository = GroupRepository(db)
+            val context = LocalContext.current
+            val addMemberViewModel: AddGroupMemberViewModel = viewModel(
+                factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+                    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                        return AddGroupMemberViewModel(context.applicationContext as android.app.Application, groupRepository) as T
+                    }
+                }
+            )
+            
+            AddGroupMemberScreen(
+                groupId = groupId,
+                viewModel = addMemberViewModel,
+                onBackClick = { navController.popBackStack() },
+                onSuccess = { 
+                    navController.popBackStack() // Go back to Group Info
+                }
             )
         }
     }

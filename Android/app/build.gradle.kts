@@ -117,6 +117,12 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.3.1")
     implementation("androidx.camera:camera-view:1.3.1")
     
+    // QR Code generation (ZXing)
+    implementation("com.google.zxing:core:3.5.2")
+    
+    // Google ML Kit Barcode Scanning (bundled model)
+    implementation("com.google.mlkit:barcode-scanning:17.2.0")
+    
     // Accompanist for permissions
     implementation("com.google.accompanist:accompanist-permissions:0.32.0")
     

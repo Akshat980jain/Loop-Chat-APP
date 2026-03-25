@@ -18,8 +18,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.loopchat.app.data.UserSessionInfo
-import java.text.SimpleDateFormat
-import java.util.*
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -249,15 +251,20 @@ private fun maskIpAddress(ip: String): String {
     return "Unknown IP"
 }
 
+// Helper to format ISO strings from Supabase sessions
 private fun formatIsoString(isoString: String): String {
-    try {
-        val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
-        format.timeZone = TimeZone.getTimeZone("UTC")
-        val date = format.parse(isoString) ?: return isoString
+    return try {
+        // Normalize UTC timestamp string
+        val normalizedTimestamp = isoString.replace(" ", "T").let { ts ->
+            if (!ts.contains("Z") && !ts.contains("+")) "${ts}Z" else ts
+        }
         
-        val outFormat = SimpleDateFormat("MMM d, yyyy • h:mm a", Locale.getDefault())
-        return outFormat.format(date)
+        val instant = Instant.parse(normalizedTimestamp)
+        val formatter = DateTimeFormatter.ofPattern("MMM d, yyyy • h:mm a", Locale.getDefault())
+            .withZone(ZoneId.systemDefault())
+            
+        formatter.format(instant)
     } catch (e: Exception) {
-        return isoString
+        isoString
     }
 }

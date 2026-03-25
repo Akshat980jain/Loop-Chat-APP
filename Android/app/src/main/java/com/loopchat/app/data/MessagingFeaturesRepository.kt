@@ -749,15 +749,17 @@ object MessagingFeaturesRepository {
         messageId: String,
         targetConversationIds: List<String>
     ): Result<List<Message>> {
+        if (targetConversationIds.isEmpty()) return Result.success(emptyList())
+
         return try {
             val accessToken = SupabaseClient.getAccessToken() 
                 ?: return Result.failure(Exception("Not authenticated"))
             val senderId = SupabaseClient.currentUserId 
                 ?: return Result.failure(Exception("No user ID"))
             
-            // Get original message
+            // Get original message full content
             val getMessage = httpClient.get("$supabaseUrl/rest/v1/messages") {
-                parameter("select", "content")
+                parameter("select", "content,media_url,message_type")
                 parameter("id", "eq.$messageId")
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
@@ -765,39 +767,86 @@ object MessagingFeaturesRepository {
             }
             
             if (!getMessage.status.isSuccess()) {
-                return Result.failure(Exception("Message not found"))
+                return Result.failure(Exception("Message not found or unauthorized"))
             }
             
-            val originalMessage: Message = getMessage.body()
-            val forwardedMessages = mutableListOf<Message>()
+            val originalMessage: Map<String, String?> = getMessage.body()
+            val content = originalMessage["content"]
+            val mediaUrl = originalMessage["media_url"]
+            val messageType = originalMessage["message_type"] ?: "text"
             
-            // Create forwarded message in each target conversation
-            for (conversationId in targetConversationIds) {
-                val response = httpClient.post("$supabaseUrl/rest/v1/messages") {
-                    contentType(ContentType.Application.Json)
-                    header("apikey", supabaseKey)
-                    header("Authorization", "Bearer $accessToken")
-                    header("Prefer", "return=representation")
-                    setBody(mapOf(
-                        "conversation_id" to conversationId,
-                        "sender_id" to senderId,
-                        "content" to originalMessage.content,
-                        "forwarded" to true
-                    ))
-                }
-                
-                if (response.status.isSuccess()) {
-                    val messages: List<Message> = response.body()
-                    forwardedMessages.add(messages.first())
-                }
+            // Create bulk insert payload
+            val payloads = targetConversationIds.map { conversationId ->
+                mapOf(
+                    "conversation_id" to conversationId,
+                    "sender_id" to senderId,
+                    "content" to (content ?: ""),
+                    "media_url" to mediaUrl,
+                    "message_type" to messageType,
+                    "forwarded" to true
+                )
             }
             
-            Result.success(forwardedMessages)
+            val response = httpClient.post("$supabaseUrl/rest/v1/messages") {
+                contentType(ContentType.Application.Json)
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $accessToken")
+                header("Prefer", "return=representation")
+                setBody(payloads)
+            }
+            
+            if (response.status.isSuccess()) {
+                val forwardedMessages: List<Message> = response.body()
+                Result.success(forwardedMessages)
+            } else {
+                Result.failure(Exception("Failed to forward messages: \${response.bodyAsText()}"))
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
     
+    /**
+     * Fetch media gallery items (photos/videos, docs, links)
+     */
+    suspend fun getMediaGallery(
+        httpClient: HttpClient,
+        conversationId: String,
+        type: String // "media", "docs", "links"
+    ): Result<List<Message>> {
+        return try {
+            val accessToken = SupabaseClient.getAccessToken() 
+                ?: return Result.failure(Exception("Not authenticated"))
+            
+            val response = httpClient.get("$supabaseUrl/rest/v1/messages") {
+                parameter("select", "id,content,media_url,message_type,created_at,sender_id")
+                parameter("conversation_id", "eq.$conversationId")
+                
+                when (type) {
+                    "media" -> parameter("message_type", "in.(image,video)")
+                    "docs" -> parameter("message_type", "eq.document")
+                    "links" -> {
+                        parameter("message_type", "eq.text")
+                        parameter("content", "ilike.*http*")
+                    }
+                }
+                parameter("deleted_for_everyone", "eq.false") // dont fetch deleted ones
+                parameter("order", "created_at.desc")
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $accessToken")
+            }
+            
+            if (response.status.isSuccess()) {
+                val messages: List<Message> = response.body()
+                Result.success(messages)
+            } else {
+                Result.failure(Exception("Failed to fetch gallery media"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     /**
      * Delete message for everyone
      */

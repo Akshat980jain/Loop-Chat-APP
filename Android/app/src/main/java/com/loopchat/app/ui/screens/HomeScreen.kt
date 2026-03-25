@@ -115,6 +115,20 @@ fun HomeScreen(
                             )
                         }
                         IconButton(
+                            onClick = { onNavigate("notification_history") },
+                            modifier = Modifier
+                                .padding(end = 8.dp)
+                                .size(40.dp)
+                                .background(SurfaceContainerHighest, CircleShape)
+                        ) {
+                            Icon(
+                                Icons.Default.Notifications, 
+                                contentDescription = "Notifications", 
+                                tint = Primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(
                             onClick = { viewModel.openNewChatDialog() },
                             modifier = Modifier
                                 .padding(end = 8.dp)
@@ -180,21 +194,52 @@ fun HomeScreen(
         },
         floatingActionButton = {
             if (selectedTab == 0) {
-                // Primary gradient FAB at 135° with atmospheric glow
-                FloatingActionButton(
-                    onClick = { viewModel.openNewChatDialog() },
-                    containerColor = Color.Transparent,
-                    modifier = Modifier
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = PrimaryGradientColors,
-                                start = androidx.compose.ui.geometry.Offset(0f, 0f),
-                                end = androidx.compose.ui.geometry.Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
-                            ),
-                            shape = CircleShape
+                var showFabMenu by remember { mutableStateOf(false) }
+                
+                Box {
+                    // Primary gradient FAB at 135° with atmospheric glow
+                    FloatingActionButton(
+                        onClick = { showFabMenu = true },
+                        containerColor = Color.Transparent,
+                        modifier = Modifier
+                            .background(
+                                brush = Brush.linearGradient(
+                                    colors = PrimaryGradientColors,
+                                    start = androidx.compose.ui.geometry.Offset(0f, 0f),
+                                    end = androidx.compose.ui.geometry.Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
+                                ),
+                                shape = CircleShape
+                            )
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "New", tint = TextPrimary)
+                    }
+                    
+                    DropdownMenu(
+                        expanded = showFabMenu,
+                        onDismissRequest = { showFabMenu = false },
+                        modifier = Modifier.background(SurfaceContainer)
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("New Chat", color = TextPrimary) },
+                            onClick = {
+                                showFabMenu = false
+                                viewModel.openNewChatDialog()
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Default.Chat, contentDescription = null, tint = Primary)
+                            }
                         )
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "New Chat", tint = TextPrimary)
+                        DropdownMenuItem(
+                            text = { Text("New Group", color = TextPrimary) },
+                            onClick = {
+                                showFabMenu = false
+                                onNavigate("group_creation")
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Default.Group, contentDescription = null, tint = Primary)
+                            }
+                        )
+                    }
                 }
             }
         }

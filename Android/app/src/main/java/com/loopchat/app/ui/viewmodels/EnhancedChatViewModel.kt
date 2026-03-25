@@ -57,6 +57,9 @@ class EnhancedChatViewModel : ViewModel() {
     
     var isSelectionMode by mutableStateOf(false)
         private set
+        
+    var polls by mutableStateOf<Map<String, com.loopchat.app.data.Poll>>(emptyMap())
+        private set
     
     var starredMessageIds by mutableStateOf<Set<String>>(emptySet())
         private set
@@ -84,6 +87,9 @@ class EnhancedChatViewModel : ViewModel() {
         private set
 
     var isVanishModeEnabled by mutableStateOf(false)
+        private set
+
+    var isChatDisabled by mutableStateOf(false)
         private set
         
     fun toggleVanishMode() {
@@ -113,9 +119,16 @@ class EnhancedChatViewModel : ViewModel() {
             com.loopchat.app.data.realtime.SupabaseRealtimeClient.initialize(context)
             com.loopchat.app.data.realtime.SupabaseRealtimeClient.connectAndSubscribe(conversationId)
             
-            // Load other participant and starred messages
+            launch {
+                com.loopchat.app.data.realtime.SupabaseRealtimeClient.typingUsers.collect { users ->
+                    typingUsers = users
+                }
+            }
+            
+            // Load other participant, starred messages, and moderation status
             loadOtherParticipant(conversationId)
             loadStarredMessages()
+            loadModerationStatus(conversationId)
             
             val db = com.loopchat.app.data.local.LoopChatDatabase.getDatabase(context)
             
@@ -164,6 +177,11 @@ class EnhancedChatViewModel : ViewModel() {
                     
                     messages = messageList
                     loadReactionsForMessages(messageList.map { it.id })
+                    
+                    val pollMessageIds = messageList.filter { it.messageType == "poll" }.map { it.id }
+                    if (pollMessageIds.isNotEmpty()) {
+                        loadPollsForMessages(pollMessageIds)
+                    }
                     
                     if (otherParticipant == null) {
                         val currentUserId = SupabaseClient.currentUserId
@@ -612,82 +630,53 @@ class EnhancedChatViewModel : ViewModel() {
         errorMessage = null
         
         viewModelScope.launch {
-            try {
-                val currentUserId = com.loopchat.app.data.SupabaseClient.currentUserId ?: throw Exception("No user ID")
-                val accessToken = com.loopchat.app.data.SupabaseClient.getAccessToken() ?: throw Exception("Not authenticated")
-                
-                // 1. Create the Message payload
-                val messagePayload = mapOf(
-                    "conversation_id" to cid,
-                    "sender_id" to currentUserId,
-                    "content" to "📊 Poll: $question",
-                    "message_type" to "poll"
-                )
-                
-                val messageResponse = httpClient.post("\${com.loopchat.app.BuildConfig.SUPABASE_URL}/rest/v1/messages") {
-                    header("Authorization", "Bearer $accessToken")
-                    header("apikey", com.loopchat.app.BuildConfig.SUPABASE_ANON_KEY)
-                    header("Prefer", "return=representation")
-                    contentType(io.ktor.http.ContentType.Application.Json)
-                    setBody(messagePayload)
+            val result = com.loopchat.app.data.InteractiveChatRepository.createPoll(
+                httpClient,
+                cid,
+                question,
+                options,
+                isMultipleChoice
+            )
+            result.onFailure { e ->
+                errorMessage = "Failed to create poll: ${e.message}"
+            }
+            isSending = false
+        }
+    }
+
+    fun voteOnPoll(pollId: String, optionId: String, isMultipleChoice: Boolean) {
+        viewModelScope.launch {
+            val result = com.loopchat.app.data.InteractiveChatRepository.voteOnPollOption(
+                httpClient,
+                optionId,
+                pollId,
+                isMultipleChoice
+            )
+            result.onSuccess {
+                // Reload polls to update vote counts
+                val poll = polls.values.find { it.id == pollId }
+                poll?.let { p ->
+                    loadPollsForMessages(listOf(p.message_id))
                 }
-                
-                if (!messageResponse.status.isSuccess()) {
-                    throw Exception("Failed to send poll message: \${messageResponse.status}")
+            }
+            result.onFailure { e ->
+                errorMessage = "Failed to submit vote: ${e.message}"
+            }
+        }
+    }
+    
+    private fun loadPollsForMessages(messageIds: List<String>) {
+        viewModelScope.launch {
+            val result = com.loopchat.app.data.InteractiveChatRepository.getPollsForMessages(
+                httpClient,
+                messageIds
+            )
+            result.onSuccess { loadedPolls ->
+                val newMap = polls.toMutableMap()
+                loadedPolls.forEach { poll ->
+                    newMap[poll.message_id] = poll
                 }
-                
-                // Parse the returned message to get the ID
-                val messageList = messageResponse.body<List<com.loopchat.app.data.models.Message>>()
-                val newMessageId = messageList.firstOrNull()?.id ?: throw Exception("Message ID not returned")
-                
-                // 2. Create the Poll record
-                val pollPayload = mapOf(
-                    "message_id" to newMessageId,
-                    "question" to question,
-                    "is_multiple_choice" to isMultipleChoice,
-                    "is_anonymous" to isAnonymous
-                )
-                
-                val pollResponse = httpClient.post("\${com.loopchat.app.BuildConfig.SUPABASE_URL}/rest/v1/polls") {
-                    header("Authorization", "Bearer $accessToken")
-                    header("apikey", com.loopchat.app.BuildConfig.SUPABASE_ANON_KEY)
-                    header("Prefer", "return=representation")
-                    contentType(io.ktor.http.ContentType.Application.Json)
-                    setBody(pollPayload)
-                }
-                
-                if (!pollResponse.status.isSuccess()) {
-                    throw Exception("Failed to create poll record")
-                }
-                
-                val pollList = pollResponse.body<List<Map<String, Any>>>()
-                val pollId = pollList.firstOrNull()?.get("id")?.toString() ?: throw Exception("Poll ID not returned")
-                
-                // 3. Create the Poll Options
-                val optionsPayload = options.map { optionText ->
-                    mapOf(
-                        "poll_id" to pollId,
-                        "option_text" to optionText
-                    )
-                }
-                
-                val optionsResponse = httpClient.post("\${com.loopchat.app.BuildConfig.SUPABASE_URL}/rest/v1/poll_options") {
-                    header("Authorization", "Bearer $accessToken")
-                    header("apikey", com.loopchat.app.BuildConfig.SUPABASE_ANON_KEY)
-                    // No need for return=representation here unless we need the IDs immediately
-                    contentType(io.ktor.http.ContentType.Application.Json)
-                    setBody(optionsPayload)
-                }
-                
-                if (!optionsResponse.status.isSuccess()) {
-                    throw Exception("Failed to create poll options")
-                }
-                
-            } catch (e: Exception) {
-                errorMessage = e.message ?: "Failed to create poll"
-                e.printStackTrace()
-            } finally {
-                isSending = false
+                polls = newMap
             }
         }
     }
@@ -772,11 +761,10 @@ class EnhancedChatViewModel : ViewModel() {
     // ============================================
     
     fun updateTypingStatus(isTyping: Boolean) {
-        val conversationId = currentConversationId ?: return
+        if (currentConversationId == null) return
         
-        viewModelScope.launch {
-            MessagingFeaturesRepository.updateTypingStatus(httpClient, conversationId, isTyping)
-        }
+        // Broadcast typing via WebSocket instead of REST DB insertion
+        com.loopchat.app.data.realtime.SupabaseRealtimeClient.sendTypingEvent(isTyping)
     }
     
     // ============================================
@@ -815,5 +803,74 @@ class EnhancedChatViewModel : ViewModel() {
         super.onCleared()
         com.loopchat.app.data.realtime.SupabaseRealtimeClient.disconnect()
         httpClient.close()
+    }
+
+    private suspend fun loadModerationStatus(conversationId: String) {
+        val token = SupabaseClient.getAccessToken() ?: return
+        try {
+            val convResponse = httpClient.get("${SupabaseClient.supabaseUrl}/rest/v1/conversations") {
+                parameter("id", "eq.$conversationId")
+                parameter("select", "group_id,is_group")
+                header("apikey", SupabaseClient.supabaseKey)
+                header("Authorization", "Bearer $token")
+            }
+            if (!convResponse.status.isSuccess()) return
+            val convs: kotlinx.serialization.json.JsonArray = convResponse.body()
+            val conv = convs.firstOrNull() as? kotlinx.serialization.json.JsonObject ?: return
+            
+            val isGroup = conv["is_group"]?.toString()?.toBoolean() ?: false
+            if (isGroup) {
+                val groupIdRaw = conv["group_id"]?.toString()
+                if (groupIdRaw == null || groupIdRaw == "null") return
+                val groupId = groupIdRaw.replace("\"", "")
+                
+                // Check group suspension
+                val grpResp = httpClient.get("${SupabaseClient.supabaseUrl}/rest/v1/groups") {
+                    parameter("id", "eq.$groupId")
+                    parameter("select", "is_suspended")
+                    header("apikey", SupabaseClient.supabaseKey)
+                    header("Authorization", "Bearer $token")
+                }
+                var groupSuspended = false
+                if (grpResp.status.isSuccess()) {
+                    val ge: kotlinx.serialization.json.JsonArray = grpResp.body()
+                    val gf = ge.firstOrNull() as? kotlinx.serialization.json.JsonObject
+                    groupSuspended = gf?.get("is_suspended")?.toString()?.toBoolean() ?: false
+                }
+                
+                // Check user suspension
+                val profResp = httpClient.get("${SupabaseClient.supabaseUrl}/rest/v1/profiles") {
+                    parameter("user_id", "eq.${SupabaseClient.currentUserId}")
+                    parameter("select", "id")
+                    header("apikey", SupabaseClient.supabaseKey)
+                    header("Authorization", "Bearer $token")
+                }
+                var userSuspended = false
+                if (profResp.status.isSuccess()) {
+                    val pe: kotlinx.serialization.json.JsonArray = profResp.body()
+                    val pf = pe.firstOrNull() as? kotlinx.serialization.json.JsonObject
+                    val pId = pf?.get("id")?.toString()?.replace("\"", "")
+                    if (pId != null && pId != "null") {
+                        val memResp = httpClient.get("${SupabaseClient.supabaseUrl}/rest/v1/group_members") {
+                            parameter("group_id", "eq.$groupId")
+                            parameter("user_id", "eq.$pId")
+                            parameter("select", "role")
+                            header("apikey", SupabaseClient.supabaseKey)
+                            header("Authorization", "Bearer $token")
+                        }
+                        if (memResp.status.isSuccess()) {
+                            val me: kotlinx.serialization.json.JsonArray = memResp.body()
+                            val mf = me.firstOrNull() as? kotlinx.serialization.json.JsonObject
+                            val role = mf?.get("role")?.toString()?.replace("\"", "")
+                            userSuspended = (role == "suspended")
+                        }
+                    }
+                }
+                
+                isChatDisabled = groupSuspended || userSuspended
+            }
+        } catch (e: Exception) {
+            // Silently catch so we don't break message loading entirely
+        }
     }
 }

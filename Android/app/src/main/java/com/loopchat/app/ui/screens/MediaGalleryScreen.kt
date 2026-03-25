@@ -22,6 +22,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.loopchat.app.ui.theme.*
 
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.loopchat.app.ui.viewmodels.MediaGalleryViewModel
+
 /**
  * Media Gallery Screen — Electric Noir Design
  * Tabs: Media / Docs / Links
@@ -29,27 +32,27 @@ import com.loopchat.app.ui.theme.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaGalleryScreen(
-    onBackClick: () -> Unit
+    conversationId: String,
+    onBackClick: () -> Unit,
+    viewModel: MediaGalleryViewModel = viewModel()
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf("Media", "Docs", "Links")
 
-    // Mock data
-    val mockMedia = remember { List(12) { MediaItem("m$it", "media") } }
-    val mockDocs = remember {
-        listOf(
-            DocItem("d1", "Project_Brief.pdf", "2.4 MB", "Yesterday"),
-            DocItem("d2", "Design_Assets.zip", "15.8 MB", "Mar 15"),
-            DocItem("d3", "Meeting_Notes.docx", "340 KB", "Mar 14"),
-            DocItem("d4", "Contract_v2.pdf", "1.1 MB", "Mar 10")
-        )
+    LaunchedEffect(conversationId) {
+        viewModel.loadGallery(conversationId)
     }
-    val mockLinks = remember {
-        listOf(
-            LinkItem("l1", "Figma Design File", "figma.com/file/abc123", "Yesterday"),
-            LinkItem("l2", "GitHub Repository", "github.com/loopchat/app", "Mar 12"),
-            LinkItem("l3", "Notion Document", "notion.so/workspace/doc", "Mar 10")
-        )
+
+    // Map fetched messages to UI models
+    val mediaItems = viewModel.mediaItems.map { msg -> MediaItem(msg.id, msg.messageType, msg.mediaUrl) }
+    val docItems = viewModel.docItems.map { msg -> 
+        val name = msg.mediaUrl?.substringAfterLast("/")?.substringBeforeLast("?") ?: "Document"
+        DocItem(msg.id, name, "File", viewModel.formatDate(msg.createdAt), msg.mediaUrl) 
+    }
+    val linkItems = viewModel.linkItems.flatMap { msg ->
+        viewModel.extractLinks(msg.content).mapIndexed { i, url ->
+            LinkItem("${msg.id}_$i", "Shared Link", url, viewModel.formatDate(msg.createdAt))
+        }
     }
 
     Scaffold(
@@ -102,9 +105,9 @@ fun MediaGalleryScreen(
             }
 
             when (selectedTab) {
-                0 -> MediaGridTab(mockMedia)
-                1 -> DocsListTab(mockDocs)
-                2 -> LinksListTab(mockLinks)
+                0 -> MediaGridTab(mediaItems)
+                1 -> DocsListTab(docItems)
+                2 -> LinksListTab(linkItems)
             }
         }
     }
@@ -132,12 +135,21 @@ private fun MediaGridTab(items: List<MediaItem>) {
                         .clickable { },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        Icons.Default.Image,
-                        contentDescription = null,
-                        tint = TextMuted,
-                        modifier = Modifier.size(32.dp)
-                    )
+                    if (!item.url.isNullOrBlank()) {
+                        coil.compose.AsyncImage(
+                            model = item.url,
+                            contentDescription = "Media",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.Image,
+                            contentDescription = null,
+                            tint = TextMuted,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
                 }
             }
         }
@@ -304,6 +316,6 @@ private fun EmptyGalleryState(
     }
 }
 
-private data class MediaItem(val id: String, val type: String)
-private data class DocItem(val id: String, val name: String, val size: String, val date: String)
+private data class MediaItem(val id: String, val type: String, val url: String?)
+private data class DocItem(val id: String, val name: String, val size: String, val date: String, val url: String?)
 private data class LinkItem(val id: String, val title: String, val url: String, val date: String)

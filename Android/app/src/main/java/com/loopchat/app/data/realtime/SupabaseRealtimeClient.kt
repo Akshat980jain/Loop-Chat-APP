@@ -129,6 +129,36 @@ object SupabaseRealtimeClient {
     private val _onlineUsers = MutableStateFlow<Set<String>>(emptySet())
     val onlineUsers = _onlineUsers.asStateFlow()
 
+    private val _typingUsers = MutableStateFlow<Set<String>>(emptySet())
+    val typingUsers = _typingUsers.asStateFlow()
+
+    fun sendTypingEvent(isTyping: Boolean) {
+        val conversationId = activeConversationId ?: return
+        val userId = SupabaseClient.currentUserId ?: return
+        scope.launch {
+            try {
+                val payload = """
+                    {
+                      "topic": "realtime:public:messages:conversation_id=eq.$conversationId",
+                      "event": "broadcast",
+                      "payload": {
+                        "type": "broadcast",
+                        "event": "typing",
+                        "payload": {
+                            "user_id": "$userId",
+                            "is_typing": $isTyping
+                        }
+                      },
+                      "ref": "typing"
+                    }
+                """.trimIndent()
+                session?.send(Frame.Text(payload))
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send typing event", e)
+            }
+        }
+    }
+
     private fun startHeartbeat() {
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
@@ -158,7 +188,7 @@ object SupabaseRealtimeClient {
               "event": "phx_join",
               "payload": {
                 "config": {
-                  "broadcast": { "self": false },
+                  "broadcast": { "self": false, "ack": false },
                   "presence": { "key": "$userId" },
                   "postgres_changes": [
                     {
@@ -190,6 +220,20 @@ object SupabaseRealtimeClient {
                 val joins = payload["joins"]?.jsonObject?.keys ?: emptySet()
                 val leaves = payload["leaves"]?.jsonObject?.keys ?: emptySet()
                 _onlineUsers.value = (_onlineUsers.value + joins) - leaves
+            } else if (event == "broadcast") {
+                val payload = element["payload"]?.jsonObject ?: return
+                val bEvent = payload["event"]?.jsonPrimitive?.content
+                if (bEvent == "typing") {
+                    val innerPayload = payload["payload"]?.jsonObject ?: return
+                    val userId = innerPayload["user_id"]?.jsonPrimitive?.content ?: return
+                    val isTyping = innerPayload["is_typing"]?.jsonPrimitive?.boolean ?: false
+                    
+                    if (isTyping) {
+                        _typingUsers.value = _typingUsers.value + userId
+                    } else {
+                        _typingUsers.value = _typingUsers.value - userId
+                    }
+                }
             } else if (event == "postgres_changes") {
                 val payload = element["payload"]?.jsonObject ?: return
                 val type = payload["type"]?.jsonPrimitive?.content ?: return

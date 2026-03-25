@@ -26,6 +26,9 @@ import com.loopchat.app.data.ConversationWithParticipant
 import com.loopchat.app.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.*
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @Composable
 fun EmptyState(
@@ -241,13 +244,25 @@ fun ConversationItem(
     }
 }
 
-// Simple time formatter
+// Simple time formatter that respects local timezone
 private fun formatTime(timestamp: String): String {
-    // Try to parse ISO string roughly
-    // This is a simplification. Ideally use a proper date formatter.
     return try {
-        timestamp.substring(11, 16) // Extract HH:mm
+        // Normalize UTC timestamp string from Supabase
+        val normalizedTimestamp = timestamp.replace(" ", "T").let { ts ->
+            if (!ts.contains("Z") && !ts.contains("+")) "${ts}Z" else ts
+        }
+        
+        val instant = Instant.parse(normalizedTimestamp)
+        val formatter = DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())
+            .withZone(ZoneId.systemDefault())
+            
+        formatter.format(instant)
     } catch (e: Exception) {
-        ""
+        // Fallback to rough extraction if parsing fails
+        try {
+            if (timestamp.length >= 16) timestamp.substring(11, 16) else ""
+        } catch (e2: Exception) {
+            ""
+        }
     }
 }

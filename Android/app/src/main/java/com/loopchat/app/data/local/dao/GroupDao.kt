@@ -29,6 +29,9 @@ interface GroupDao {
     @Query("DELETE FROM groups WHERE id = :groupId")
     suspend fun deleteGroup(groupId: String)
 
+    @Query("UPDATE groups SET isSuspended = :isSuspended WHERE id = :groupId")
+    suspend fun updateGroupSuspension(groupId: String, isSuspended: Boolean)
+
     // Group Members
     @Query("SELECT * FROM group_members WHERE groupId = :groupId")
     fun observeGroupMembers(groupId: String): Flow<List<GroupMemberEntity>>

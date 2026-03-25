@@ -39,6 +39,7 @@ import com.loopchat.app.ui.theme.*
 import com.loopchat.app.ui.viewmodels.EnhancedChatViewModel
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.zIndex
+
 import com.loopchat.app.ui.viewmodels.VoiceRecorderViewModel
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -46,6 +47,10 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.sp
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -55,6 +60,8 @@ fun EnhancedChatScreen(
     onBackClick: () -> Unit,
     onCallClick: (String, String) -> Unit,
     onNavigateToProfile: (String) -> Unit,
+    onNavigateToGroupInfo: (String) -> Unit,
+    onNavigateToMediaGallery: (String) -> Unit = {},
     chatViewModel: EnhancedChatViewModel = viewModel(),
     voiceViewModel: VoiceRecorderViewModel = viewModel()
 ) {
@@ -149,8 +156,9 @@ fun EnhancedChatScreen(
     }
     
     // Scroll to latest message when new message arrives or chat opens
-    LaunchedEffect(chatViewModel.messages.size) {
-        if (chatViewModel.messages.isNotEmpty()) {
+    val latestMessageId = chatViewModel.messages.lastOrNull()?.id
+    LaunchedEffect(latestMessageId) {
+        if (latestMessageId != null) {
             // With reverseLayout=true and asReversed(), index 0 = newest message at bottom
             listState.animateScrollToItem(0)
         }
@@ -184,7 +192,17 @@ fun EnhancedChatScreen(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.combinedClickable(
-                            onClick = { otherUserId?.let { onNavigateToProfile(it) } }
+                            onClick = { 
+                                val isGroupChat = chatViewModel.currentConversation?.is_group == true
+                                if (isGroupChat) {
+                                    val groupId = chatViewModel.currentConversation?.group_id
+                                    if (groupId != null) {
+                                        onNavigateToGroupInfo(groupId)
+                                    }
+                                } else {
+                                    otherUserId?.let { onNavigateToProfile(it) }
+                                }
+                            }
                         )
                     ) {
                         val isGroupChat = chatViewModel.currentConversation?.is_group == true
@@ -219,8 +237,10 @@ fun EnhancedChatScreen(
                                 chatViewModel.isLoading -> "Loading..."
                                 isGroupChat -> "Group Message"
                                 isOnline -> "online"
-                                chatViewModel.otherParticipant?.lastSeen != null -> "Last seen at ${formatTimestamp(chatViewModel.otherParticipant!!.lastSeen!!)}"
-                                else -> "offline"
+                                else -> {
+                                    val lastSeen = chatViewModel.otherParticipant?.lastSeen
+                                    if (lastSeen != null) "Last seen at ${formatTimestamp(lastSeen)}" else "offline"
+                                }
                             }
                             Text(
                                 text = statusText,
@@ -236,7 +256,7 @@ fun EnhancedChatScreen(
                     }
                 },
                 actions = {
-                    var lastCallTimestamp by remember { mutableLongStateOf(0L) }
+                    var lastCallTimestamp by remember { mutableStateOf(0L) }
                     
                     val participantId = chatViewModel.otherParticipant?.userId 
                         ?: chatViewModel.otherParticipant?.id
@@ -275,6 +295,13 @@ fun EnhancedChatScreen(
                             onClick = {
                                 showChatMenu = false
                                 participantId?.let { onNavigateToProfile(it) }
+                            }
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("Media Gallery") },
+                            onClick = {
+                                showChatMenu = false
+                                onNavigateToMediaGallery(conversationId)
                             }
                         )
                     }
@@ -440,8 +467,13 @@ fun EnhancedChatScreen(
                             message = message,
                             isFromMe = isFromMe,
                             isStarred = message.id in chatViewModel.starredMessageIds,
+                            isGroup = chatViewModel.currentConversation?.is_group == true,
                             reactions = chatViewModel.messageReactions[message.id] ?: emptyMap(),
                             currentUserId = currentUserId ?: "",
+                            poll = if (message.messageType == "poll") chatViewModel.polls[message.id] else null,
+                            onVotePoll = { optionId, isMultipleChoice ->
+                                chatViewModel.voteOnPoll(message.id, optionId, isMultipleChoice)
+                            },
                             onLongPress = {
                                 selectedMessageForMenu = message
                                 showMessageMenu = true
@@ -640,7 +672,22 @@ fun EnhancedChatScreen(
             }
             
             // Message input or Voice Recorder
-            if (voiceState.isRecording) {
+            if (chatViewModel.isChatDisabled) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = SurfaceVariant,
+                    tonalElevation = 2.dp
+                ) {
+                    Text(
+                        text = chatViewModel.errorMessage ?: "You cannot send messages in this group.",
+                        color = TextSecondary,
+                        modifier = Modifier.padding(16.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            } else if (voiceState.isRecording) {
                  Surface(
                     modifier = Modifier.fillMaxWidth().padding(8.dp),
                     color = Color.Transparent,
@@ -907,8 +954,11 @@ private fun EnhancedMessageBubble(
     message: MessageWithSender,
     isFromMe: Boolean,
     isStarred: Boolean,
+    isGroup: Boolean,
     reactions: Map<String, List<String>>,
     currentUserId: String,
+    poll: com.loopchat.app.data.Poll? = null,
+    onVotePoll: (optionId: String, isMultipleChoice: Boolean) -> Unit = { _, _ -> },
     onLongPress: () -> Unit,
     onSwipeReply: () -> Unit,
     onReactionClick: (String) -> Unit,
@@ -1113,23 +1163,46 @@ private fun EnhancedMessageBubble(
 
                 // Poll Message Render
                 if (message.messageType == "poll") {
-                    // Extract question from content "📊 Poll: Question"
                     val question = message.content.substringAfter("📊 Poll: ").trim()
                     
-                    val placeholderOptions = listOf(
-                        PollOptionUI("1", "Local Render Only", 2, true),
-                        PollOptionUI("2", "Backend Integration Pending", 5, false)
-                    )
-                    
-                    PollBubble(
-                        question = question,
-                        options = placeholderOptions,
-                        totalVotes = 7,
-                        isMultipleChoice = false,
-                        isFromMe = isFromMe,
-                        onVote = { },
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
+                    if (poll != null) {
+                        val optionsData = poll.options ?: poll.poll_options
+                        val totalVotes = optionsData.flatMap { it.votes ?: it.poll_votes }.size
+                        
+                        val realOptions = optionsData.map { opt ->
+                            val votesForOpt = opt.votes ?: opt.poll_votes
+                            val hasVoted = votesForOpt.any { it.user_id == currentUserId }
+                            PollOptionUI(
+                                id = opt.id,
+                                text = opt.option_text,
+                                voteCount = votesForOpt.size,
+                                isVotedByMe = hasVoted
+                            )
+                        }.sortedBy { it.id }
+                        
+                        PollBubble(
+                            question = poll.question,
+                            options = realOptions,
+                            totalVotes = totalVotes,
+                            isMultipleChoice = poll.multiple_answers,
+                            isFromMe = isFromMe,
+                            onVote = { optionId ->
+                                onVotePoll(optionId, poll.multiple_answers)
+                            },
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                    } else {
+                        // Show loading state while poll fetches
+                        PollBubble(
+                            question = question,
+                            options = listOf(PollOptionUI("1", "Loading Poll Data...", 0, isVotedByMe = false)),
+                            totalVotes = 0,
+                            isMultipleChoice = false,
+                            isFromMe = isFromMe,
+                            onVote = { },
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                    }
                 }
 
                 // Text payload / Deleted Message Render
@@ -1209,11 +1282,14 @@ private fun EnhancedMessageBubble(
                 horizontalArrangement = Arrangement.Start,
                 modifier = Modifier.padding(top = 4.dp, start = 4.dp, end = 4.dp)
             ) {
-                Text(
-                    text = "${message.sender?.fullName ?: "Olivia B."} • ",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TextMuted
-                )
+                // Only show sender name in group chats
+                if (isGroup) {
+                    Text(
+                        text = "${message.sender?.fullName ?: message.sender?.username ?: "User"} • ",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextMuted
+                    )
+                }
                 message.createdAt?.let { timestamp ->
                     Text(
                         text = formatTimestamp(timestamp),
@@ -1226,29 +1302,21 @@ private fun EnhancedMessageBubble(
     }
 }
 
+// Enhanced time formatter that respects local timezone
 private fun formatTimestamp(timestamp: String): String {
     return try {
-        val normalizedTimestamp = timestamp
-            .replace(" ", "T")
-            .let { ts ->
-                val tIndex = ts.indexOf("T")
-                val hasTimezoneOffset = ts.contains("Z") || ts.contains("+") || 
-                    (tIndex >= 0 && ts.substring(tIndex + 1).contains("-"))
-                if (!hasTimezoneOffset) {
-                    "${ts}Z"
-                } else {
-                    ts
-                }
-            }
+        // Normalize UTC timestamp string from Supabase
+        val normalizedTimestamp = timestamp.replace(" ", "T").let { ts ->
+            if (!ts.contains("Z") && !ts.contains("+")) "${ts}Z" else ts
+        }
         
-        val instant = java.time.Instant.parse(normalizedTimestamp)
-        val localDateTime = java.time.LocalDateTime.ofInstant(
-            instant, 
-            java.time.ZoneId.systemDefault()
-        )
+        val instant = Instant.parse(normalizedTimestamp)
         
-        val formatter = java.time.format.DateTimeFormatter.ofPattern("hh:mm a")
-        localDateTime.format(formatter)
+        // Use 12-hour format with AM/PM for in-chat messages
+        val formatter = DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())
+            .withZone(ZoneId.systemDefault())
+            
+        formatter.format(instant)
     } catch (e: Exception) {
         android.util.Log.e("EnhancedChatScreen", "Error formatting timestamp", e)
         ""

@@ -196,6 +196,33 @@ class AuthViewModel : ViewModel() {
                     lockoutUntil = null
                     lockoutCountdown = 0
                     lockoutJob?.cancel()
+                    
+                    // Trigger FCM upload for new login
+                    try {
+                        com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                            if (task.isSuccessful) {
+                                viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    com.loopchat.app.data.SupabaseClient.updateFcmToken(task.result)
+                                    com.loopchat.app.data.PrivacySecurityRepository.registerDevice(
+                                        httpClient = com.loopchat.app.data.SupabaseClient.httpClient,
+                                        deviceName = android.os.Build.MODEL ?: "Android Device",
+                                        deviceType = "android",
+                                        deviceToken = task.result
+                                    )
+                                    
+                                    // Upload E2EE public key for this device
+                                    val deviceId = android.provider.Settings.Secure.getString(
+                                        context.contentResolver,
+                                        android.provider.Settings.Secure.ANDROID_ID
+                                    )
+                                    com.loopchat.app.data.KeyExchangeRepository.uploadPublicKey(deviceId)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("AuthViewModel", "Failed to upload FCM token", e)
+                    }
+                    
                     onSuccess()
                 }
                 is AuthResult.Error -> {
@@ -233,6 +260,26 @@ class AuthViewModel : ViewModel() {
                     formState = AuthFormState(email = formState.email)
                     authView = AuthView.LOGIN
                     errorMessage = null
+                    
+                    // Trigger FCM upload for new signup
+                    try {
+                        com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                            if (task.isSuccessful) {
+                                viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    com.loopchat.app.data.SupabaseClient.updateFcmToken(task.result)
+                                    com.loopchat.app.data.PrivacySecurityRepository.registerDevice(
+                                        httpClient = com.loopchat.app.data.SupabaseClient.httpClient,
+                                        deviceName = android.os.Build.MODEL ?: "Android Device",
+                                        deviceType = "android",
+                                        deviceToken = task.result
+                                    )
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("AuthViewModel", "Failed to upload FCM token", e)
+                    }
+                    
                     onSuccess()
                 }
                 is AuthResult.Error -> errorMessage = result.message

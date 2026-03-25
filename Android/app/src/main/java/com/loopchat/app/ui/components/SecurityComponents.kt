@@ -20,6 +20,10 @@ import androidx.compose.ui.unit.dp
 import com.loopchat.app.data.SecuritySettings
 import com.loopchat.app.data.UserDevice
 import com.loopchat.app.ui.theme.*
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * Security Settings Screen
@@ -531,8 +535,26 @@ fun TwoStepSetupDialog(
     )
 }
 
-// Helper function
+// Helper function to format timestamps for device sessions
 private fun formatTimestamp(timestamp: String): String {
-    // Simple formatting - in production use proper date formatting
-    return timestamp.substringBefore("T")
+    return try {
+        val normalizedTimestamp = timestamp.replace(" ", "T").let { ts ->
+            if (!ts.contains("Z") && !ts.contains("+")) "${ts}Z" else ts
+        }
+        
+        val instant = Instant.parse(normalizedTimestamp)
+        
+        // Format as "MMM d, yyyy" for device lists
+        val formatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.getDefault())
+            .withZone(ZoneId.systemDefault())
+            
+        formatter.format(instant)
+    } catch (e: Exception) {
+        // Fallback to extraction if parsing fails
+        try {
+            timestamp.substringBefore("T")
+        } catch (e2: Exception) {
+            timestamp
+        }
+    }
 }

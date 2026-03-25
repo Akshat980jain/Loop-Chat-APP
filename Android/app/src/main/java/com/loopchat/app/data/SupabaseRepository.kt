@@ -359,6 +359,37 @@ object SupabaseRepository {
     }
 
     /**
+     * Find registered users by their phone numbers
+     */
+    suspend fun findUsersByPhoneNumbers(phoneNumbers: List<String>): Result<List<Profile>> {
+        return try {
+            if (phoneNumbers.isEmpty()) return Result.success(emptyList())
+            val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
+            
+            val allProfiles = mutableListOf<Profile>()
+            val chunks = phoneNumbers.chunked(50) // 50 numbers per request to avoid URL length limits
+            
+            for (chunk in chunks) {
+                val phoneListStr = chunk.joinToString(",") { it }
+                val response = httpClient.get("$supabaseUrl/rest/v1/profiles") {
+                    parameter("select", "id,user_id,full_name,username,avatar_url,phone")
+                    parameter("phone", "in.($phoneListStr)")
+                    header("apikey", supabaseKey)
+                    header("Authorization", "Bearer $accessToken")
+                }
+                
+                if (response.status.isSuccess()) {
+                    val profiles: List<Profile> = response.body()
+                    allProfiles.addAll(profiles)
+                }
+            }
+            Result.success(allProfiles.distinctBy { it.id })
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Fetch messages for a conversation
      */
     suspend fun getMessages(conversationId: String): Result<List<MessageWithSender>> {
@@ -366,7 +397,7 @@ object SupabaseRepository {
             val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
 
             val messagesResponse = httpClient.get("$supabaseUrl/rest/v1/messages") {
-                parameter("select", "id,content,conversation_id,sender_id,created_at,media_url,message_type")
+                parameter("select", "id,content,conversation_id,sender_id,created_at,media_url,message_type,expires_at")
                 parameter("conversation_id", "eq.$conversationId")
                 parameter("order", "created_at.asc")
                 header("apikey", supabaseKey)
@@ -390,7 +421,8 @@ object SupabaseRepository {
                     createdAt = message.createdAt,
                     sender = sender,
                     mediaUrl = message.mediaUrl,
-                    messageType = message.messageType
+                    messageType = message.messageType,
+                    expiresAt = message.expiresAt
                 )
             }
 
@@ -409,7 +441,7 @@ object SupabaseRepository {
 
             // Fetch all remote messages for the conversation
             val messagesResponse = httpClient.get("$supabaseUrl/rest/v1/messages") {
-                parameter("select", "id,content,conversation_id,sender_id,created_at,media_url,message_type")
+                parameter("select", "id,content,conversation_id,sender_id,created_at,media_url,message_type,expires_at")
                 parameter("conversation_id", "eq.$conversationId")
                 parameter("order", "created_at.asc")
                 header("apikey", supabaseKey)
@@ -453,7 +485,7 @@ object SupabaseRepository {
             val accessToken = SupabaseClient.getAccessToken() ?: return Result.failure(Exception("Not authenticated"))
 
             val messagesResponse = httpClient.get("$supabaseUrl/rest/v1/messages") {
-                parameter("select", "id,content,conversation_id,sender_id,created_at,media_url,message_type")
+                parameter("select", "id,content,conversation_id,sender_id,created_at,media_url,message_type,expires_at")
                 parameter("conversation_id", "eq.$conversationId")
                 parameter("created_at", "gt.$since")
                 parameter("order", "created_at.asc")
@@ -481,7 +513,8 @@ object SupabaseRepository {
                     createdAt = message.createdAt,
                     sender = sender,
                     mediaUrl = message.mediaUrl,
-                    messageType = message.messageType
+                    messageType = message.messageType,
+                    expiresAt = message.expiresAt
                 )
             }
 
@@ -1347,6 +1380,7 @@ data class MessageWithSender(
     val replyToMessageId: String? = null,
     val forwarded: Boolean? = null,
     val deletedForEveryone: Boolean? = null,
+    val expiresAt: String? = null,
     val deletedAt: String? = null,
     val isRead: Boolean = false,
     val status: String = "synced"
