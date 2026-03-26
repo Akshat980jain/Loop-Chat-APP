@@ -85,6 +85,8 @@ fun CallScreen(
     initialCallId: String? = null,
     initialRoomUrl: String? = null,
     initialCalleeToken: String? = null,
+    isGroupCall: Boolean = false,
+    groupId: String? = null,
     onEndCall: () -> Unit
 ) {
     // Mute and video state — read from DailyCallManager as single source of truth
@@ -350,17 +352,24 @@ fun CallScreen(
                     
                     // Try the edge function first (requires DAILY_API_KEY configured in Supabase)
                     try {
+                        val roomRequestBody = kotlinx.serialization.json.buildJsonObject {
+                            put("action", kotlinx.serialization.json.JsonPrimitive("create"))
+                            put("roomName", kotlinx.serialization.json.JsonPrimitive(generatedRoomName))
+                            put("callerId", kotlinx.serialization.json.JsonPrimitive(currentUserId))
+                            put("callType", kotlinx.serialization.json.JsonPrimitive(callType))
+                            if (isGroupCall && groupId != null) {
+                                put("isGroupCall", kotlinx.serialization.json.JsonPrimitive(true))
+                                put("groupId", kotlinx.serialization.json.JsonPrimitive(groupId))
+                            } else {
+                                put("calleeId", kotlinx.serialization.json.JsonPrimitive(calleeId))
+                            }
+                        }
+                        
                         val roomResponse = httpClient.post("${BuildConfig.SUPABASE_URL}/functions/v1/daily-room") {
                             contentType(ContentType.Application.Json)
                             header("apikey", BuildConfig.SUPABASE_ANON_KEY)
                             header("Authorization", "Bearer $accessToken")
-                            setBody(mapOf(
-                                "action" to "create",
-                                "roomName" to generatedRoomName,
-                                "callerId" to currentUserId,
-                                "calleeId" to calleeId,
-                                "callType" to callType
-                            ))
+                            setBody(roomRequestBody.toString())
                         }
                         
                         Log.d(TAG, "Room creation response status: ${roomResponse.status}")
@@ -418,16 +427,21 @@ fun CallScreen(
                         header("Authorization", "Bearer $accessToken")
                         header("Prefer", "return=representation")
                         // Include all columns including tokens for secure authentication
-                        setBody(mapOf(
-                            "caller_id" to currentUserId,
-                            "callee_id" to calleeId,
-                            "call_type" to callType,
-                            "status" to "ringing",
-                            "room_url" to createdRoomUrl,
-                            "caller_token" to (createdCallerToken ?: ""),
-                            "callee_token" to (createdCalleeToken ?: ""),
-                            "room_name" to (createdRoomName ?: "")
-                        ))
+                        val callBody = kotlinx.serialization.json.buildJsonObject {
+                            put("caller_id", kotlinx.serialization.json.JsonPrimitive(currentUserId))
+                            put("call_type", kotlinx.serialization.json.JsonPrimitive(callType))
+                            put("status", kotlinx.serialization.json.JsonPrimitive("ringing"))
+                            put("room_url", kotlinx.serialization.json.JsonPrimitive(createdRoomUrl))
+                            put("caller_token", kotlinx.serialization.json.JsonPrimitive(createdCallerToken ?: ""))
+                            put("callee_token", kotlinx.serialization.json.JsonPrimitive(createdCalleeToken ?: ""))
+                            put("room_name", kotlinx.serialization.json.JsonPrimitive(createdRoomName ?: ""))
+                            if (isGroupCall && groupId != null) {
+                                put("group_id", kotlinx.serialization.json.JsonPrimitive(groupId))
+                            } else {
+                                put("callee_id", kotlinx.serialization.json.JsonPrimitive(calleeId))
+                            }
+                        }
+                        setBody(callBody.toString())
                     }
                     
                     if (response.status.isSuccess()) {
@@ -446,15 +460,18 @@ fun CallScreen(
                                     contentType(ContentType.Application.Json)
                                     header("apikey", BuildConfig.SUPABASE_ANON_KEY)
                                     header("Authorization", "Bearer $accessToken")
-                                    setBody(mapOf(
-                                        "callId" to callId,
-                                        "callerId" to currentUserId,
-                                        "calleeId" to calleeId,
-                                        "callerName" to (ownProfile?.fullName ?: ownProfile?.username ?: "Loop User"),
-                                        "callType" to callType,
-                                        "roomUrl" to createdRoomUrl,
-                                        "calleeToken" to (createdCalleeToken ?: "")
-                                    ))
+                                    val pushBody = kotlinx.serialization.json.buildJsonObject {
+                                        put("callId", kotlinx.serialization.json.JsonPrimitive(callId))
+                                        put("callerId", kotlinx.serialization.json.JsonPrimitive(currentUserId))
+                                        put("calleeId", kotlinx.serialization.json.JsonPrimitive(calleeId))
+                                        put("callerName", kotlinx.serialization.json.JsonPrimitive(ownProfile?.fullName ?: ownProfile?.username ?: "Loop User"))
+                                        put("callType", kotlinx.serialization.json.JsonPrimitive(callType))
+                                        put("roomUrl", kotlinx.serialization.json.JsonPrimitive(createdRoomUrl))
+                                        put("calleeToken", kotlinx.serialization.json.JsonPrimitive(createdCalleeToken ?: ""))
+                                        put("isGroupCall", kotlinx.serialization.json.JsonPrimitive(isGroupCall))
+                                        put("groupId", kotlinx.serialization.json.JsonPrimitive(groupId ?: ""))
+                                    }
+                                    setBody(pushBody.toString())
                                 }
                                 Log.d(TAG, "FCM push notification result: ${pushResponse.status}")
                                 if (!pushResponse.status.isSuccess()) {
@@ -566,6 +583,43 @@ fun CallScreen(
                 Log.d(TAG, "=== CALLEE JOINING ROOM ===")
                 Log.d(TAG, "Room URL: $fetchedRoomUrl")
                 Log.d(TAG, "Has meeting token: ${!meetingToken.isNullOrEmpty()}")
+                
+                // For group calls, fetch a dynamic token since no pre-generated calleeToken exists
+                if (isGroupCall && meetingToken.isNullOrEmpty()) {
+                    Log.d(TAG, "=== GROUP CALL: Fetching dynamic meeting token ===")
+                    try {
+                        // Extract room name from URL (e.g. https://xxx.daily.co/room-name)
+                        val roomName = fetchedRoomUrl!!.substringAfterLast("/")
+                        val currentUserId = SupabaseClient.currentUserId
+                        val tokenResponse = httpClient.post("${BuildConfig.SUPABASE_URL}/functions/v1/daily-room") {
+                            contentType(ContentType.Application.Json)
+                            header("apikey", BuildConfig.SUPABASE_ANON_KEY)
+                            header("Authorization", "Bearer $accessToken")
+                            setBody(mapOf(
+                                "action" to "get-token",
+                                "roomName" to roomName,
+                                "calleeId" to (currentUserId ?: "")
+                            ))
+                        }
+                        if (tokenResponse.status.isSuccess()) {
+                            val tokenData = tokenResponse.bodyAsText()
+                            val parsed = edgeFunctionJson.decodeFromString<kotlinx.serialization.json.JsonObject>(tokenData)
+                            val dynamicToken = parsed["token"]?.let { 
+                                (it as? kotlinx.serialization.json.JsonPrimitive)?.content 
+                            }
+                            if (!dynamicToken.isNullOrEmpty()) {
+                                meetingToken = dynamicToken
+                                Log.d(TAG, "Dynamic meeting token acquired for group call")
+                            }
+                        } else {
+                            Log.w(TAG, "Failed to get dynamic token: ${tokenResponse.status}")
+                            addErrorLog("Dynamic token fetch failed: ${tokenResponse.status}")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error fetching dynamic token: ${e.message}")
+                        addErrorLog("Dynamic token exception: ${e.message}")
+                    }
+                }
             } else {
                 Log.e(TAG, "=== NO ROOM URL FOUND - CANNOT JOIN ===")
                 callStatus = "No room URL found — call cannot connect"
@@ -795,8 +849,6 @@ fun CallScreen(
                     .fillMaxSize()
                     .padding(bottom = 120.dp) // Leave space for controls at bottom
             ) {
-                val remoteParticipant = dailyRemoteParticipants.values.firstOrNull()
-
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -804,57 +856,107 @@ fun CallScreen(
                     contentAlignment = Alignment.Center
                 ) {
                 if (callType == "video") {
-                        // Remote Participant Video (Full Screen)
-                        if (remoteParticipant != null) {
-                            val remoteVideoTrack = remoteParticipant.media?.camera?.track
-                            val remoteCameraState = remoteParticipant.media?.camera?.state
-                            
-                            Log.d(TAG, "Remote participant: id=${remoteParticipant.id}, cameraState=$remoteCameraState, hasTrack=${remoteVideoTrack != null}")
-                            
-                            if (remoteCameraState == co.daily.model.MediaState.playable && remoteVideoTrack != null) {
-                                key(remoteParticipant.id.toString()) {
-                                    DailyVideoView(
-                                        videoTrack = remoteVideoTrack,
-                                        modifier = Modifier.fillMaxSize(),
-                                        scaleMode = VideoView.VideoScaleMode.FILL
-                                    )
+                        // Remote Participant Video(s)
+                        val remoteParticipants = dailyRemoteParticipants.values.toList()
+                        
+                        if (isGroupCall && remoteParticipants.size > 1) {
+                            // Group call: show participants in a grid
+                            val columns = if (remoteParticipants.size <= 2) 1 else 2
+                            androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                                columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(columns),
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)
+                            ) {
+                                items(remoteParticipants.size) { index ->
+                                    val participant = remoteParticipants[index]
+                                    val videoTrack = participant.media?.camera?.track
+                                    val cameraState = participant.media?.camera?.state
+                                    
+                                    Box(
+                                        modifier = Modifier
+                                            .aspectRatio(3f / 4f)
+                                            .padding(2.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color.Black),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (cameraState == co.daily.model.MediaState.playable && videoTrack != null) {
+                                            key(participant.id.toString()) {
+                                                DailyVideoView(
+                                                    videoTrack = videoTrack,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    scaleMode = VideoView.VideoScaleMode.FILL
+                                                )
+                                            }
+                                        } else {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                val pInitial = participant.info?.userName?.firstOrNull()?.toString()?.uppercase() ?: "?"
+                                                GradientAvatar(initial = pInitial, size = 60.dp, borderWidth = 2.dp)
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text(
+                                                    text = participant.info?.userName ?: "Participant",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = TextSecondary
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
-                            } else {
-                                // Remote connected but video off or track not ready
+                            }
+                        } else {
+                            // 1-on-1 call or single remote participant
+                            val remoteParticipant = remoteParticipants.firstOrNull()
+                            if (remoteParticipant != null) {
+                                val remoteVideoTrack = remoteParticipant.media?.camera?.track
+                                val remoteCameraState = remoteParticipant.media?.camera?.state
+                                
+                                Log.d(TAG, "Remote participant: id=${remoteParticipant.id}, cameraState=$remoteCameraState, hasTrack=${remoteVideoTrack != null}")
+                                
+                                if (remoteCameraState == co.daily.model.MediaState.playable && remoteVideoTrack != null) {
+                                    key(remoteParticipant.id.toString()) {
+                                        DailyVideoView(
+                                            videoTrack = remoteVideoTrack,
+                                            modifier = Modifier.fillMaxSize(),
+                                            scaleMode = VideoView.VideoScaleMode.FILL
+                                        )
+                                    }
+                                } else {
+                                    // Remote connected but video off or track not ready
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        GradientAvatar(initial = displayInitial, size = 120.dp, borderWidth = 3.dp)
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Text(
+                                            text = if (remoteCameraState == co.daily.model.MediaState.off) 
+                                                "$displayName (Camera Off)" 
+                                            else 
+                                                "$displayName (Connecting video...)",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = TextSecondary
+                                        )
+                                    }
+                                }
+                            } else if (dailyHasRemote) {
+                                // Remote connected but no participant object yet
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     GradientAvatar(initial = displayInitial, size = 120.dp, borderWidth = 3.dp)
                                     Spacer(modifier = Modifier.height(16.dp))
                                     Text(
-                                        text = if (remoteCameraState == co.daily.model.MediaState.off) 
-                                            "$displayName (Camera Off)" 
-                                        else 
-                                            "$displayName (Connecting video...)",
+                                        text = "$displayName (Camera Off)",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = TextSecondary
                                     )
                                 }
-                            }
-                        } else if (dailyHasRemote) {
-                            // Remote connected but no participant object yet
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                GradientAvatar(initial = displayInitial, size = 120.dp, borderWidth = 3.dp)
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = "$displayName (Camera Off)",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = TextSecondary
-                                )
-                            }
-                        } else {
-                            // Waiting for remote
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                GradientAvatar(initial = displayInitial, size = 120.dp, borderWidth = 3.dp)
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = "Waiting for other user...",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = TextSecondary
-                                )
+                            } else {
+                                // Waiting for remote
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    GradientAvatar(initial = displayInitial, size = 120.dp, borderWidth = 3.dp)
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = if (isGroupCall) "Waiting for participants..." else "Waiting for other user...",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = TextSecondary
+                                    )
+                                }
                             }
                         }
 

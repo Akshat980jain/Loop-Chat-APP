@@ -176,19 +176,47 @@ serve(async (req) => {
             conversationId
         } = await req.json();
 
-        console.log(`Message notification: from=${senderName} to=${receiverId}, type=${messageType}`);
+        console.log(`Message notification: from=${senderName} conversation=${conversationId}, type=${messageType}`);
 
-        // Fetch receiver's FCM token
-        const { data: receiverSettings, error: settingsError } = await supabase
-            .from("user_settings")
-            .select("fcm_token")
-            .eq("user_id", receiverId)
-            .single();
+        let receiverIds: string[] = [];
 
-        if (settingsError || !receiverSettings?.fcm_token) {
-            console.warn("Receiver has no FCM token:", receiverId);
+        if (conversationId) {
+            // Get all participants except the sender
+            const { data: participants } = await supabase
+                .from("conversation_participants")
+                .select("user_id")
+                .eq("conversation_id", conversationId)
+                .neq("user_id", senderId);
+                
+            if (participants && participants.length > 0) {
+                receiverIds = participants.map((p: any) => p.user_id);
+            } else if (receiverId) {
+                // Fallback to receiverId if no participants found
+                receiverIds = [receiverId];
+            }
+        } else if (receiverId) {
+            receiverIds = [receiverId];
+        }
+
+        if (receiverIds.length === 0) {
+            console.warn("No receivers found for notification.");
             return new Response(
-                JSON.stringify({ success: false, error: "No FCM token" }),
+                JSON.stringify({ success: false, error: "No receivers found" }),
+                { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Fetch valid FCM tokens for the receivers
+        const { data: userSettings, error: settingsError } = await supabase
+            .from("user_settings")
+            .select("user_id, fcm_token")
+            .in("user_id", receiverIds)
+            .not("fcm_token", "is", null);
+
+        if (settingsError || !userSettings || userSettings.length === 0) {
+            console.warn("No valid FCM tokens found for receivers");
+            return new Response(
+                JSON.stringify({ success: false, error: "No FCM tokens" }),
                 { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
@@ -211,40 +239,66 @@ serve(async (req) => {
             timestamp: Date.now().toString(),
         };
 
-        let result: { success: boolean; error?: string };
-
-        if (hasServiceAccount) {
+        let activeServiceAccount = hasServiceAccount;
+        let serviceAccount: ServiceAccount | undefined;
+        
+        if (activeServiceAccount) {
             try {
-                const serviceAccount = JSON.parse(GOOGLE_SERVICE_ACCOUNT!) as ServiceAccount;
-                result = await sendFcmV1(serviceAccount, receiverSettings.fcm_token, notificationData);
-            } catch (parseError) {
-                if (hasServerKey) {
-                    result = await sendFcmLegacy(FCM_SERVER_KEY!, receiverSettings.fcm_token, notificationData);
-                } else {
-                    throw parseError;
-                }
+                serviceAccount = JSON.parse(GOOGLE_SERVICE_ACCOUNT!) as ServiceAccount;
+            } catch (e) {
+                activeServiceAccount = false;
             }
-        } else {
-            result = await sendFcmLegacy(FCM_SERVER_KEY!, receiverSettings.fcm_token, notificationData);
         }
 
-        console.log("FCM result:", result);
+        const results = [];
+        let successCount = 0;
+        
+        // Send to all valid tokens
+        for (const setting of userSettings) {
+            const fcmToken = setting.fcm_token;
+            let result: { success: boolean; error?: string };
+            
+            if (activeServiceAccount && serviceAccount) {
+                try {
+                    result = await sendFcmV1(serviceAccount, fcmToken, notificationData);
+                } catch (err: any) {
+                    if (hasServerKey) {
+                        result = await sendFcmLegacy(FCM_SERVER_KEY!, fcmToken, notificationData);
+                    } else {
+                        result = { success: false, error: err.message || "Unknown error" };
+                    }
+                }
+            } else if (hasServerKey) {
+                result = await sendFcmLegacy(FCM_SERVER_KEY!, fcmToken, notificationData);
+            } else {
+                result = { success: false, error: "FCM not configured properly" };
+            }
+            
+            results.push({ user_id: setting.user_id, result });
+            
+            if (result.success) {
+                successCount++;
+            } else {
+                // Clean up invalid tokens
+                if (result.error?.includes("NotRegistered") || result.error?.includes("UNREGISTERED")) {
+                    await supabase
+                        .from("user_settings")
+                        .update({ fcm_token: null })
+                        .eq("user_id", setting.user_id);
+                }
+            }
+        }
 
-        if (result.success) {
+        console.log("FCM results summary:", `Sent ${successCount}/${userSettings.length} successfully`);
+
+        if (successCount > 0 || userSettings.length === 0) {
             return new Response(
-                JSON.stringify({ success: true }),
+                JSON.stringify({ success: true, details: results }),
                 { headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         } else {
-            // Clean up invalid tokens
-            if (result.error?.includes("NotRegistered") || result.error?.includes("UNREGISTERED")) {
-                await supabase
-                    .from("user_settings")
-                    .update({ fcm_token: null })
-                    .eq("user_id", receiverId);
-            }
             return new Response(
-                JSON.stringify({ success: false, error: result.error }),
+                JSON.stringify({ success: false, error: "All notifications failed", details: results }),
                 { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }

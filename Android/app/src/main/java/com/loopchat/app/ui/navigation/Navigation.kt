@@ -59,7 +59,7 @@ sealed class Screen(val route: String) {
     object Chat : Screen("chat/{conversationId}") {
         fun createRoute(conversationId: String) = "chat/$conversationId"
     }
-    object Call : Screen("call/{calleeId}/{callType}/{isIncoming}?callId={callId}&roomUrl={roomUrl}&calleeToken={calleeToken}&calleeName={calleeName}") {
+    object Call : Screen("call/{calleeId}/{callType}/{isIncoming}?callId={callId}&roomUrl={roomUrl}&calleeToken={calleeToken}&calleeName={calleeName}&isGroupCall={isGroupCall}&groupId={groupId}") {
         fun createRoute(
             calleeId: String, 
             callType: String, 
@@ -67,7 +67,9 @@ sealed class Screen(val route: String) {
             callId: String? = null,
             roomUrl: String? = null,
             calleeToken: String? = null,
-            calleeName: String? = null
+            calleeName: String? = null,
+            isGroupCall: Boolean = false,
+            groupId: String? = null
         ): String {
             val base = "call/$calleeId/$callType/$isIncoming"
             val params = mutableListOf<String>()
@@ -75,6 +77,8 @@ sealed class Screen(val route: String) {
             if (roomUrl != null) params.add("roomUrl=${java.net.URLEncoder.encode(roomUrl, "UTF-8")}")
             if (calleeToken != null) params.add("calleeToken=$calleeToken")
             if (calleeName != null) params.add("calleeName=${java.net.URLEncoder.encode(calleeName, "UTF-8")}")
+            if (isGroupCall) params.add("isGroupCall=true")
+            if (groupId != null) params.add("groupId=$groupId")
             
             return if (params.isEmpty()) base else "$base?${params.joinToString("&")}"
         }
@@ -85,6 +89,9 @@ sealed class Screen(val route: String) {
     }
     object IncomingCall : Screen("incoming_call")
     object Profile : Screen("profile")
+    object UserProfile : Screen("user_profile/{userId}") {
+        fun createRoute(userId: String) = "user_profile/$userId"
+    }
     
     // Phase 2: Privacy & Security Screens
     object PrivacySettings : Screen("privacy_settings")
@@ -263,6 +270,22 @@ fun LoopChatNavigation(
             )
         }
         
+        // View Other User Profile screen
+        composable(
+            route = Screen.UserProfile.route,
+            arguments = listOf(navArgument("userId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val userId = backStackEntry.arguments?.getString("userId") ?: ""
+            com.loopchat.app.ui.screens.UserProfileScreen(
+                userId = userId,
+                onBackClick = { navController.popBackStack() },
+                onMessageClick = { contactId, _ ->
+                    // Navigate to conversation
+                    navController.popBackStack()
+                }
+            )
+        }
+        
         composable(
             route = Screen.Chat.route,
             arguments = listOf(navArgument("conversationId") { type = NavType.StringType })
@@ -271,11 +294,16 @@ fun LoopChatNavigation(
             EnhancedChatScreen(
                 conversationId = conversationId,
                 onBackClick = { navController.popBackStack() },
-                onCallClick = { calleeId, callType ->
-                    navController.navigate(Screen.Call.createRoute(calleeId, callType))
+                onCallClick = { calleeId, callType, isGroupCall, groupId ->
+                    navController.navigate(Screen.Call.createRoute(
+                        calleeId = calleeId,
+                        callType = callType,
+                        isGroupCall = isGroupCall,
+                        groupId = groupId
+                    ))
                 },
                 onNavigateToProfile = { userId ->
-                    navController.navigate("profile/$userId")
+                    navController.navigate(Screen.UserProfile.createRoute(userId))
                 },
                 onNavigateToGroupInfo = { cid ->
                     navController.navigate(Screen.GroupInfo.createRoute(cid))
@@ -295,7 +323,9 @@ fun LoopChatNavigation(
                 navArgument("callId") { type = NavType.StringType; nullable = true; defaultValue = null },
                 navArgument("roomUrl") { type = NavType.StringType; nullable = true; defaultValue = null },
                 navArgument("calleeToken") { type = NavType.StringType; nullable = true; defaultValue = null },
-                navArgument("calleeName") { type = NavType.StringType; nullable = true; defaultValue = null }
+                navArgument("calleeName") { type = NavType.StringType; nullable = true; defaultValue = null },
+                navArgument("isGroupCall") { type = NavType.BoolType; defaultValue = false },
+                navArgument("groupId") { type = NavType.StringType; nullable = true; defaultValue = null }
             )
         ) { backStackEntry ->
             val calleeId = backStackEntry.arguments?.getString("calleeId") ?: ""
@@ -305,6 +335,8 @@ fun LoopChatNavigation(
             val roomUrl = backStackEntry.arguments?.getString("roomUrl")?.let { java.net.URLDecoder.decode(it, "UTF-8") }
             val calleeToken = backStackEntry.arguments?.getString("calleeToken")
             val calleeName = backStackEntry.arguments?.getString("calleeName")?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+            val isGroupCall = backStackEntry.arguments?.getBoolean("isGroupCall") ?: false
+            val groupId = backStackEntry.arguments?.getString("groupId")
             
             // Check if we should use initial data from MainActivity (for deep links)
             val effectiveCallId = callId ?: if (isIncoming && initialCallData?.callerId == calleeId) initialCallData?.callId else null
@@ -320,6 +352,8 @@ fun LoopChatNavigation(
                 initialRoomUrl = effectiveRoomUrl,
                 initialCalleeToken = effectiveCalleeToken,
                 calleeName = effectiveCalleeName,
+                isGroupCall = isGroupCall,
+                groupId = groupId,
                 onEndCall = {
                     navController.popBackStack()
                 }

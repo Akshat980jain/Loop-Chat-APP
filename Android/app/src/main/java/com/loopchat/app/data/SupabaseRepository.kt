@@ -1050,7 +1050,7 @@ object SupabaseRepository {
             // For each call, get the other user's profile
             val callsWithProfiles = calls.mapNotNull { call ->
                 val isOutgoing = call.callerId == userId
-                val otherUserId = if (isOutgoing) call.calleeId else call.callerId
+                val otherUserId = if (isOutgoing) (call.calleeId ?: call.groupId) else call.callerId
                 
                 // Fetch profile of other user
                 val profileResponse = httpClient.get("$supabaseUrl/rest/v1/profiles") {
@@ -1068,7 +1068,7 @@ object SupabaseRepository {
                 CallWithProfile(
                     id = call.id,
                     callerId = call.callerId,
-                    calleeId = call.calleeId,
+                    calleeId = call.calleeId ?: "",
                     callType = call.callType,
                     status = call.status,
                     createdAt = call.createdAt,

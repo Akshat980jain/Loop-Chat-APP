@@ -94,7 +94,9 @@ data class Call(
     @SerialName("caller_id")
     val callerId: String,
     @SerialName("callee_id")
-    val calleeId: String,
+    val calleeId: String? = null,
+    @SerialName("group_id")
+    val groupId: String? = null,
     @SerialName("call_type")
     val callType: String,
     val status: String,

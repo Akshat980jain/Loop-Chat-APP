@@ -58,7 +58,7 @@ fun EnhancedChatScreen(
     conversationId: String,
     participantName: String? = null,
     onBackClick: () -> Unit,
-    onCallClick: (String, String) -> Unit,
+    onCallClick: (String, String, Boolean, String?) -> Unit,
     onNavigateToProfile: (String) -> Unit,
     onNavigateToGroupInfo: (String) -> Unit,
     onNavigateToMediaGallery: (String) -> Unit = {},
@@ -262,12 +262,16 @@ fun EnhancedChatScreen(
                     
                     val participantId = chatViewModel.otherParticipant?.userId 
                         ?: chatViewModel.otherParticipant?.id
-                    participantId?.let { userId ->
+                    val isGroupChat = chatViewModel.currentConversation?.is_group == true
+                    val effectiveGroupId = if (isGroupChat) conversationId else null
+                    // For group chats, use conversationId as calleeId target; for 1-on-1, use participantId
+                    val callTarget = if (isGroupChat) conversationId else participantId
+                    callTarget?.let { target ->
                         IconButton(onClick = { 
                             val now = System.currentTimeMillis()
                             if (now - lastCallTimestamp > 1500L) {
                                 lastCallTimestamp = now
-                                onCallClick(userId, "audio") 
+                                onCallClick(target, "audio", isGroupChat, effectiveGroupId) 
                             }
                         }) {
                             Icon(Icons.Default.Phone, contentDescription = "Audio Call", tint = TextSecondary)
@@ -276,7 +280,7 @@ fun EnhancedChatScreen(
                             val now = System.currentTimeMillis()
                             if (now - lastCallTimestamp > 1500L) {
                                 lastCallTimestamp = now
-                                onCallClick(userId, "video") 
+                                onCallClick(target, "video", isGroupChat, effectiveGroupId) 
                             }
                         }) {
                             Icon(Icons.Default.Videocam, contentDescription = "Video Call", tint = TextSecondary)
@@ -292,11 +296,16 @@ fun EnhancedChatScreen(
                         expanded = showChatMenu,
                         onDismissRequest = { showChatMenu = false }
                     ) {
+                        val isGroupChat = chatViewModel.currentConversation?.is_group == true
                         androidx.compose.material3.DropdownMenuItem(
-                            text = { Text("View Profile") },
+                            text = { Text(if (isGroupChat) "Group Info" else "View Profile") },
                             onClick = {
                                 showChatMenu = false
-                                participantId?.let { onNavigateToProfile(it) }
+                                if (isGroupChat) {
+                                    chatViewModel.currentConversation?.group_id?.let { onNavigateToGroupInfo(it) }
+                                } else {
+                                    participantId?.let { onNavigateToProfile(it) }
+                                }
                             }
                         )
                         androidx.compose.material3.DropdownMenuItem(

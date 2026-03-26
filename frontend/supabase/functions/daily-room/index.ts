@@ -20,7 +20,7 @@ serve(async (req: Request) => {
       throw new Error("DAILY_API_KEY not configured");
     }
 
-    const { action, roomName, calleeId, callerId, callType } = await req.json();
+    const { action, roomName, calleeId, callerId, callType, isGroupCall, groupId } = await req.json();
 
     if (action === "create") {
       // Create a new Daily.co room
@@ -80,14 +80,16 @@ serve(async (req: Request) => {
       };
 
       const callerToken = callerId ? await createToken(callerId, true) : null;
-      const calleeToken = calleeId ? await createToken(calleeId, false) : null;
+      // In a group call, multiple people join, so they request tokens dynamically via get-token when joining.
+      // We don't generate a single calleeToken.
+      const calleeToken = (!isGroupCall && calleeId) ? await createToken(calleeId, false) : null;
 
       // Send FCM push notification to callee (if configured)
       const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
       const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
       const FCM_SERVER_KEY = Deno.env.get("FCM_SERVER_KEY");
 
-      if (FCM_SERVER_KEY && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && calleeId) {
+      if (FCM_SERVER_KEY && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && (calleeId || (isGroupCall && groupId))) {
         try {
           // Fetch caller's name for the notification
           // @ts-ignore
@@ -117,6 +119,8 @@ serve(async (req: Request) => {
               callType: callType || "audio", // Use actual call type from request
               roomUrl: room.url,
               calleeToken: calleeToken?.token,
+              isGroupCall,
+              groupId
             }),
           });
 

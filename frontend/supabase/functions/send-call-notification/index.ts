@@ -225,35 +225,55 @@ serve(async (req) => {
             callerName,
             callType,
             roomUrl,
-            calleeToken
+            calleeToken,
+            isGroupCall,
+            groupId
         } = await req.json();
 
-        console.log(`Sending call notification: callId=${callId}, from=${callerName}, to=${calleeId}`);
+        console.log(`Sending call notification: callId=${callId}, from=${callerName}, to=${calleeId}, isGroup=${isGroupCall}`);
 
-        // Fetch callee's FCM token from user_settings
-        const { data: calleeSettings, error: settingsError } = await supabase
-            .from("user_settings")
-            .select("fcm_token")
-            .eq("user_id", calleeId)
-            .single();
+        let targetTokens: { userId: string, token: string }[] = [];
 
-        if (settingsError) {
-            console.error("Error fetching callee settings:", settingsError);
-            return new Response(
-                JSON.stringify({ success: false, error: "Callee FCM token not found" }),
-                {
-                    status: 404,
-                    headers: { ...corsHeaders, "Content-Type": "application/json" }
-                }
-            );
+        if (isGroupCall && groupId) {
+             // Fetch all members of the group
+             const { data: participants, error: participantsError } = await supabase
+                 .from("conversation_participants")
+                 .select("user_id")
+                 .eq("conversation_id", groupId);
+             
+             if (!participantsError && participants) {
+                 const allMemberIds = participants.map((p: any) => p.user_id).filter((id: string) => id !== callerId);
+                 
+                 // Fetch FCM tokens for all members
+                 if (allMemberIds.length > 0) {
+                     const { data: settingsData } = await supabase
+                         .from("user_settings")
+                         .select("user_id, fcm_token")
+                         .in("user_id", allMemberIds)
+                         .not("fcm_token", "is", null);
+                     
+                     if (settingsData) {
+                         targetTokens = settingsData.map((s: any) => ({ userId: s.user_id, token: s.fcm_token }));
+                     }
+                 }
+             }
+        } else if (calleeId) {
+            // Fetch callee's FCM token from user_settings
+            const { data: calleeSettings, error: settingsError } = await supabase
+                .from("user_settings")
+                .select("fcm_token")
+                .eq("user_id", calleeId)
+                .single();
+
+            if (!settingsError && calleeSettings?.fcm_token) {
+                targetTokens = [{ userId: calleeId, token: calleeSettings.fcm_token }];
+            }
         }
 
-        const fcmToken = calleeSettings?.fcm_token;
-
-        if (!fcmToken) {
-            console.warn("Callee does not have FCM token registered");
+        if (targetTokens.length === 0) {
+            console.warn("No targets have FCM token registered");
             return new Response(
-                JSON.stringify({ success: false, error: "Callee has no FCM token" }),
+                JSON.stringify({ success: false, error: "No targets have FCM token" }),
                 {
                     status: 404,
                     headers: { ...corsHeaders, "Content-Type": "application/json" }
@@ -270,59 +290,57 @@ serve(async (req) => {
             call_type: callType || "audio",
             room_url: roomUrl || "",
             callee_token: calleeToken || "",
+            is_group_call: isGroupCall ? "true" : "false",
+            group_id: groupId || "",
             timestamp: Date.now().toString(),
         };
 
-        let result: { success: boolean; messageId?: string; error?: string };
+        const results = await Promise.all(targetTokens.map(async (target) => {
+            let result: { success: boolean; messageId?: string; error?: string };
+            
+            if (hasServiceAccount) {
+                try {
+                    const serviceAccount = JSON.parse(GOOGLE_SERVICE_ACCOUNT!) as ServiceAccount;
+                    result = await sendFcmV1(serviceAccount, target.token, notificationData);
+                } catch (parseError) {
+                    if (hasServerKey) {
+                        result = await sendFcmLegacy(FCM_SERVER_KEY!, target.token, notificationData);
+                    } else {
+                        throw new Error("Invalid GOOGLE_SERVICE_ACCOUNT format");
+                    }
+                }
+            } else {
+                result = await sendFcmLegacy(FCM_SERVER_KEY!, target.token, notificationData);
+            }
 
-        // Prefer v1 API if service account is available
-        if (hasServiceAccount) {
-            console.log("Using FCM v1 API with service account");
-            try {
-                const serviceAccount = JSON.parse(GOOGLE_SERVICE_ACCOUNT!) as ServiceAccount;
-                result = await sendFcmV1(serviceAccount, fcmToken, notificationData);
-            } catch (parseError) {
-                console.error("Failed to parse service account:", parseError);
-                if (hasServerKey) {
-                    console.log("Falling back to legacy FCM API");
-                    result = await sendFcmLegacy(FCM_SERVER_KEY!, fcmToken, notificationData);
-                } else {
-                    throw new Error("Invalid GOOGLE_SERVICE_ACCOUNT format");
+            if (!result.success) {
+                const errorMessage = result.error || "Unknown FCM error";
+                if (errorMessage.includes("NotRegistered") ||
+                    errorMessage.includes("InvalidRegistration") ||
+                    errorMessage.includes("UNREGISTERED")) {
+                    console.log("Removing invalid FCM token for user:", target.userId);
+                    await supabase
+                        .from("user_settings")
+                        .update({ fcm_token: null, fcm_token_updated_at: null })
+                        .eq("user_id", target.userId);
                 }
             }
-        } else {
-            console.log("Using legacy FCM API with server key");
-            result = await sendFcmLegacy(FCM_SERVER_KEY!, fcmToken, notificationData);
-        }
+            return result;
+        }));
 
-        console.log("FCM result:", result);
+        const successCount = results.filter(r => r.success).length;
 
-        if (result.success) {
+        if (successCount > 0) {
             return new Response(
                 JSON.stringify({
                     success: true,
-                    message: "Push notification sent",
-                    messageId: result.messageId
+                    message: `Push notification sent to ${successCount} targets`,
                 }),
                 { headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         } else {
-            const errorMessage = result.error || "Unknown FCM error";
-            console.error("FCM error:", errorMessage);
-
-            // If token is invalid, remove it from the database
-            if (errorMessage.includes("NotRegistered") ||
-                errorMessage.includes("InvalidRegistration") ||
-                errorMessage.includes("UNREGISTERED")) {
-                console.log("Removing invalid FCM token for user:", calleeId);
-                await supabase
-                    .from("user_settings")
-                    .update({ fcm_token: null, fcm_token_updated_at: null })
-                    .eq("user_id", calleeId);
-            }
-
             return new Response(
-                JSON.stringify({ success: false, error: errorMessage }),
+                JSON.stringify({ success: false, error: "Failed to send FCM notifications" }),
                 {
                     status: 500,
                     headers: { ...corsHeaders, "Content-Type": "application/json" }

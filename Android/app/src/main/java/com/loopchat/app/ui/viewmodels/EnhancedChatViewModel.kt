@@ -400,32 +400,33 @@ class EnhancedChatViewModel : ViewModel() {
                 // Clear reply if replying
                 replyToMessage = null
                 
-                // Send push notification to the other participant (non-blocking)
-                val receiverId = otherParticipant?.id
-                if (receiverId != null) {
-                    viewModelScope.launch {
-                        try {
-                            val accessToken = SupabaseClient.getAccessToken() ?: return@launch
-                            // Get sender's display name
-                            val myProfile = SupabaseRepository.getProfileById(currentUserId).getOrNull()
-                            val senderName = myProfile?.fullName ?: myProfile?.username ?: SupabaseClient.currentEmail ?: "Someone"
-                            httpClient.post("${com.loopchat.app.BuildConfig.SUPABASE_URL}/functions/v1/send-message-notification") {
-                                contentType(ContentType.Application.Json)
-                                header("apikey", com.loopchat.app.BuildConfig.SUPABASE_ANON_KEY)
-                                header("Authorization", "Bearer $accessToken")
-                                setBody(mapOf(
-                                    "senderId" to currentUserId,
-                                    "receiverId" to receiverId,
-                                    "senderName" to senderName,
-                                    "messageContent" to displayContent,
-                                    "messageType" to messageType,
-                                    "conversationId" to conversationId
-                                ))
-                            }
-                        } catch (e: Exception) {
-                            // Non-critical — don't break the message flow
-                            android.util.Log.w("EnhancedChatViewModel", "Push notification failed: ${e.message}")
+                // Send push notification to all participants (non-blocking)
+                viewModelScope.launch {
+                    try {
+                        val accessToken = SupabaseClient.getAccessToken() ?: return@launch
+                        // Get sender's display name
+                        val myProfile = SupabaseRepository.getProfileById(currentUserId).getOrNull()
+                        val senderName = myProfile?.fullName ?: myProfile?.username ?: SupabaseClient.currentEmail ?: "Someone"
+                        
+                        // receiverId is optional now, the backend uses conversationId to notify all participants
+                        val receiverId = otherParticipant?.id ?: ""
+                        
+                        httpClient.post("${com.loopchat.app.BuildConfig.SUPABASE_URL}/functions/v1/send-message-notification") {
+                            contentType(ContentType.Application.Json)
+                            header("apikey", com.loopchat.app.BuildConfig.SUPABASE_ANON_KEY)
+                            header("Authorization", "Bearer $accessToken")
+                            setBody(mapOf(
+                                "senderId" to currentUserId,
+                                "receiverId" to receiverId,
+                                "senderName" to senderName,
+                                "messageContent" to displayContent,
+                                "messageType" to messageType,
+                                "conversationId" to conversationId
+                            ))
                         }
+                    } catch (e: Exception) {
+                        // Non-critical — don't break the message flow
+                        android.util.Log.w("EnhancedChatViewModel", "Push notification failed: ${e.message}")
                     }
                 }
             }.onFailure { e ->
