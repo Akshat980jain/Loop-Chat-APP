@@ -1,11 +1,15 @@
 package com.loopchat.app.data
 
 import android.content.Context
+import android.util.Log
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
+import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * Repository for Phase 2: Privacy, Security & Organization Features
@@ -104,7 +108,7 @@ object PrivacySecurityRepository {
             header("apikey", supabaseKey)
             header("Authorization", "Bearer $accessToken")
             header("Prefer", "return=representation")
-            setBody(mapOf("user_id" to userId))
+            setBody(buildJsonObject { put("user_id", userId) })
         }
         
         if (response.status.isSuccess()) {
@@ -135,10 +139,10 @@ object PrivacySecurityRepository {
                 contentType(ContentType.Application.Json)
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
-                setBody(mapOf(
-                    "blocker_id" to userId,
-                    "blocked_id" to blockedUserId
-                ))
+                setBody(buildJsonObject {
+                    put("blocker_id", userId)
+                    put("blocked_id", blockedUserId)
+                })
             }
             
             if (response.status.isSuccess()) {
@@ -232,10 +236,10 @@ object PrivacySecurityRepository {
                 contentType(ContentType.Application.Json)
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
-                setBody(mapOf(
-                    "user_id" to userId,
-                    "conversation_id" to conversationId
-                ))
+                setBody(buildJsonObject {
+                    put("user_id", userId)
+                    put("conversation_id", conversationId)
+                })
             }
             
             if (response.status.isSuccess()) {
@@ -330,11 +334,11 @@ object PrivacySecurityRepository {
                 contentType(ContentType.Application.Json)
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
-                setBody(mapOf(
-                    "user_id" to userId,
-                    "conversation_id" to conversationId,
-                    "pin_order" to pinOrder
-                ))
+                setBody(buildJsonObject {
+                    put("user_id", userId)
+                    put("conversation_id", conversationId)
+                    put("pin_order", pinOrder)
+                })
             }
             
             if (response.status.isSuccess()) {
@@ -430,11 +434,11 @@ object PrivacySecurityRepository {
                 contentType(ContentType.Application.Json)
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
-                setBody(mapOf(
-                    "user_id" to userId,
-                    "conversation_id" to conversationId,
-                    "muted_until" to mutedUntil
-                ))
+                setBody(buildJsonObject {
+                    put("user_id", userId)
+                    put("conversation_id", conversationId)
+                    put("muted_until", mutedUntil)
+                })
             }
             
             if (response.status.isSuccess()) {
@@ -566,13 +570,13 @@ object PrivacySecurityRepository {
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
                 header("Prefer", "resolution=merge-duplicates")
-                setBody(mapOf(
-                    "conversation_id" to conversationId,
-                    "enabled" to true,
-                    "duration_seconds" to durationSeconds,
-                    "enabled_by" to userId,
-                    "enabled_at" to "now()"
-                ))
+                setBody(buildJsonObject {
+                    put("conversation_id", conversationId)
+                    put("enabled", true)
+                    put("duration_seconds", durationSeconds)
+                    put("enabled_by", userId)
+                    put("enabled_at", "now()")
+                })
             }
             
             if (response.status.isSuccess()) {
@@ -601,10 +605,10 @@ object PrivacySecurityRepository {
                 parameter("conversation_id", "eq.$conversationId")
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
-                setBody(mapOf(
-                    "enabled" to false,
-                    "duration_seconds" to null
-                ))
+                setBody(buildJsonObject {
+                    put("enabled", false)
+                    put("duration_seconds", null as Int?)
+                })
             }
             
             if (response.status.isSuccess()) {
@@ -705,11 +709,11 @@ object PrivacySecurityRepository {
                 parameter("user_id", "eq.$userId")
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
-                setBody(mapOf(
-                    "two_step_enabled" to true,
-                    "two_step_pin_hash" to pinHash,
-                    "two_step_email" to email
-                ))
+                setBody(buildJsonObject {
+                    put("two_step_enabled", true)
+                    put("two_step_pin_hash", pinHash)
+                    put("two_step_email", email)
+                })
             }
             
             if (response.status.isSuccess()) {
@@ -739,11 +743,11 @@ object PrivacySecurityRepository {
                 parameter("user_id", "eq.$userId")
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
-                setBody(mapOf(
-                    "two_step_enabled" to false,
-                    "two_step_pin_hash" to null,
-                    "two_step_email" to null
-                ))
+                setBody(buildJsonObject {
+                    put("two_step_enabled", false)
+                    put("two_step_pin_hash", null as String?)
+                    put("two_step_email", null as String?)
+                })
             }
             
             if (response.status.isSuccess()) {
@@ -768,17 +772,23 @@ object PrivacySecurityRepository {
             val userId = SupabaseClient.currentUserId 
                 ?: return Result.failure(Exception("No user ID"))
             
-            val response = httpClient.patch("$supabaseUrl/rest/v1/security_settings") {
+            // Use UPSERT (POST with Prefer header) instead of PATCH to ensure row existence
+            val response = httpClient.post("$supabaseUrl/rest/v1/security_settings") {
                 contentType(ContentType.Application.Json)
-                parameter("user_id", "eq.$userId")
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
-                setBody(mapOf("biometric_lock_enabled" to true))
+                header("Prefer", "resolution=merge-duplicates")
+                setBody(buildJsonObject {
+                    put("user_id", userId)
+                    put("biometric_lock_enabled", true)
+                })
             }
             
             if (response.status.isSuccess()) {
                 Result.success(Unit)
             } else {
+                val error = response.bodyAsText()
+                Log.e("SecurityRepo", "Enable biometric lock failed: $error")
                 Result.failure(Exception("Failed to enable biometric lock"))
             }
         } catch (e: Exception) {
@@ -798,18 +808,122 @@ object PrivacySecurityRepository {
             val userId = SupabaseClient.currentUserId 
                 ?: return Result.failure(Exception("No user ID"))
             
-            val response = httpClient.patch("$supabaseUrl/rest/v1/security_settings") {
+            val response = httpClient.post("$supabaseUrl/rest/v1/security_settings") {
                 contentType(ContentType.Application.Json)
-                parameter("user_id", "eq.$userId")
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
-                setBody(mapOf("biometric_lock_enabled" to false))
+                header("Prefer", "resolution=merge-duplicates")
+                setBody(buildJsonObject {
+                    put("user_id", userId)
+                    put("biometric_lock_enabled", false)
+                })
             }
             
             if (response.status.isSuccess()) {
                 Result.success(Unit)
             } else {
                 Result.failure(Exception("Failed to disable biometric lock"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+    
+    /**
+     * Enable biometric login (distinct from biometric app lock).
+     * This allows the user to sign in with fingerprint/face instead of password.
+     */
+    suspend fun enableBiometricLogin(
+        httpClient: HttpClient
+    ): Result<Unit> {
+        return try {
+            val accessToken = SupabaseClient.getAccessToken() 
+                ?: return Result.failure(Exception("Not authenticated"))
+            val userId = SupabaseClient.currentUserId 
+                ?: return Result.failure(Exception("No user ID"))
+            
+            val response = httpClient.post("$supabaseUrl/rest/v1/security_settings") {
+                contentType(ContentType.Application.Json)
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $accessToken")
+                header("Prefer", "resolution=merge-duplicates")
+                setBody(buildJsonObject {
+                    put("user_id", userId)
+                    put("biometric_login_enabled", true)
+                })
+            }
+            
+            if (response.status.isSuccess()) {
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception("Failed to enable biometric login"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+    
+    /**
+     * Disable biometric login
+     */
+    suspend fun disableBiometricLogin(
+        httpClient: HttpClient
+    ): Result<Unit> {
+        return try {
+            val accessToken = SupabaseClient.getAccessToken() 
+                ?: return Result.failure(Exception("Not authenticated"))
+            val userId = SupabaseClient.currentUserId 
+                ?: return Result.failure(Exception("No user ID"))
+            
+            val response = httpClient.post("$supabaseUrl/rest/v1/security_settings") {
+                contentType(ContentType.Application.Json)
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $accessToken")
+                header("Prefer", "resolution=merge-duplicates")
+                setBody(buildJsonObject {
+                    put("user_id", userId)
+                    put("biometric_login_enabled", false)
+                })
+            }
+            
+            if (response.status.isSuccess()) {
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception("Failed to disable biometric login"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+    
+    /**
+     * Update security notifications enabled state
+     */
+    suspend fun updateSecurityNotifications(
+        httpClient: HttpClient,
+        enabled: Boolean
+    ): Result<Unit> {
+        return try {
+            val accessToken = SupabaseClient.getAccessToken() 
+                ?: return Result.failure(Exception("Not authenticated"))
+            val userId = SupabaseClient.currentUserId 
+                ?: return Result.failure(Exception("No user ID"))
+            
+            val response = httpClient.post("$supabaseUrl/rest/v1/security_settings") {
+                contentType(ContentType.Application.Json)
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $accessToken")
+                header("Prefer", "resolution=merge-duplicates")
+                setBody(buildJsonObject {
+                    put("user_id", userId)
+                    put("security_notifications_enabled", enabled)
+                })
+            }
+            
+            if (response.status.isSuccess()) {
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception("Failed to update security notifications"))
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -825,7 +939,7 @@ object PrivacySecurityRepository {
             header("apikey", supabaseKey)
             header("Authorization", "Bearer $accessToken")
             header("Prefer", "return=representation")
-            setBody(mapOf("user_id" to userId))
+            setBody(buildJsonObject { put("user_id", userId) })
         }
         
         if (response.status.isSuccess()) {
@@ -859,12 +973,12 @@ object PrivacySecurityRepository {
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
                 header("Prefer", "resolution=merge-duplicates")
-                setBody(mapOf(
-                    "user_id" to userId,
-                    "device_name" to deviceName,
-                    "device_type" to deviceType,
-                    "device_token" to deviceToken
-                ))
+                setBody(buildJsonObject {
+                    put("user_id", userId)
+                    put("device_name", deviceName)
+                    put("device_type", deviceType)
+                    put("device_token", deviceToken)
+                })
             }
             
             if (response.status.isSuccess()) {
@@ -951,7 +1065,7 @@ object PrivacySecurityRepository {
                 parameter("device_token", "eq.$deviceToken")
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
-                setBody(mapOf("last_active" to "now()"))
+                setBody(buildJsonObject { put("last_active", "now()") })
             }
             
             if (response.status.isSuccess()) {
@@ -1037,6 +1151,7 @@ data class SecuritySettings(
     val two_step_pin_hash: String? = null,
     val two_step_email: String? = null,
     val biometric_lock_enabled: Boolean = false,
+    val biometric_login_enabled: Boolean = false,
     val security_notifications_enabled: Boolean = true,
     val created_at: String? = null,
     val updated_at: String? = null

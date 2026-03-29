@@ -1,16 +1,19 @@
 package com.loopchat.app.ui.screens
 
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
@@ -20,8 +23,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -33,6 +38,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.loopchat.app.R
 import com.loopchat.app.ui.components.GlassCard
@@ -48,7 +54,23 @@ fun AuthScreen(
     viewModel: AuthViewModel = viewModel()
 ) {
     val context = LocalContext.current
+    val activity = context as? FragmentActivity
     val scrollState = rememberScrollState()
+    
+    // Check biometric status on first composition
+    LaunchedEffect(Unit) {
+        activity?.let { viewModel.checkBiometricStatus(it) }
+    }
+    
+    // Auto-trigger biometric prompt for returning users
+    LaunchedEffect(viewModel.isBiometricEnrolled, viewModel.hasAutoPrompted) {
+        if (viewModel.isBiometricEnrolled && !viewModel.hasAutoPrompted && activity != null) {
+            viewModel.markAutoPrompted()
+            // Small delay to let the UI render first
+            kotlinx.coroutines.delay(500)
+            viewModel.attemptBiometricLogin(activity, onAuthSuccess)
+        }
+    }
     
     Box(
         modifier = Modifier
@@ -148,7 +170,14 @@ fun AuthScreen(
                     when (viewModel.authView) {
                         AuthView.LOGIN -> LoginForm(
                             viewModel = viewModel,
-                            onLogin = { viewModel.login(context, onAuthSuccess) }
+                            onLogin = { viewModel.login(context, onAuthSuccess) },
+                            onBiometricLogin = {
+                                activity?.let { act ->
+                                    viewModel.attemptBiometricLogin(act, onAuthSuccess)
+                                }
+                            },
+                            onVerifyOtp = { viewModel.verifyOtp(context, onAuthSuccess) },
+                            onSendOtp = { viewModel.sendOtp() }
                         )
                         AuthView.SIGNUP -> SignupForm(
                             viewModel = viewModel,
@@ -184,6 +213,14 @@ fun AuthScreen(
             
             Spacer(modifier = Modifier.height(24.dp))
         }
+    }
+    
+    // Biometric Enrollment Dialog
+    if (viewModel.isBiometricEnrollDialogVisible && activity != null) {
+        BiometricEnrollmentDialog(
+            onEnable = { viewModel.enableBiometricLogin(activity) },
+            onDismiss = { viewModel.dismissBiometricEnrollDialog() }
+        )
     }
 }
 
@@ -243,8 +280,14 @@ private fun AuthViewToggle(
 @Composable
 private fun LoginForm(
     viewModel: AuthViewModel,
-    onLogin: () -> Unit
+    onLogin: () -> Unit,
+    onBiometricLogin: () -> Unit,
+    onVerifyOtp: () -> Unit,
+    onSendOtp: () -> Unit
 ) {
+    val context = LocalContext.current
+    val activity = context as? FragmentActivity
+    
     Column {
         // Login Method Toggle
         LoginMethodToggle(
@@ -254,30 +297,84 @@ private fun LoginForm(
         
         Spacer(modifier = Modifier.height(20.dp))
         
-        when (viewModel.loginMethod) {
-            LoginMethod.EMAIL -> {
-                // Email Field
-                OutlinedTextField(
-                    value = viewModel.formState.email,
-                    onValueChange = { viewModel.updateEmail(it) },
-                    label = { Text("Email") },
-                    placeholder = { Text("your@email.com", color = TextMuted) },
-                    leadingIcon = {
-                        Icon(Icons.Default.Email, contentDescription = null, tint = Primary)
-                    },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Primary,
-                        unfocusedBorderColor = SurfaceVariant,
-                        focusedLabelColor = Primary,
-                        cursorColor = Primary
-                    )
+        if (viewModel.loginMethod == LoginMethod.EMAIL) {
+            // Email Field
+            OutlinedTextField(
+                value = viewModel.formState.email,
+                onValueChange = { viewModel.updateEmail(it) },
+                label = { Text("Email Address") },
+                placeholder = { Text("Enter your email", color = TextMuted) },
+                leadingIcon = {
+                    Icon(Icons.Default.Email, contentDescription = null, tint = Primary)
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Primary,
+                    unfocusedBorderColor = SurfaceVariant,
+                    focusedLabelColor = Primary,
+                    cursorColor = Primary
                 )
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Password Field
+            OutlinedTextField(
+                value = viewModel.formState.password,
+                onValueChange = { viewModel.updatePassword(it) },
+                label = { Text("Password") },
+                placeholder = { Text("••••••••", color = TextMuted) },
+                leadingIcon = {
+                    Icon(Icons.Default.Lock, contentDescription = null, tint = Primary)
+                },
+                trailingIcon = {
+                    IconButton(onClick = { viewModel.togglePasswordVisibility() }) {
+                        Icon(
+                            imageVector = if (viewModel.showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = if (viewModel.showPassword) "Hide password" else "Show password",
+                            tint = TextSecondary
+                        )
+                    }
+                },
+                visualTransformation = if (viewModel.showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Primary,
+                    unfocusedBorderColor = SurfaceVariant,
+                    focusedLabelColor = Primary,
+                    cursorColor = Primary
+                )
+            )
+            
+            // Forgot Password link
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = { /* TODO: Forgot password flow */ }) {
+                    Text("Forgot Password?", color = Primary, fontSize = 13.sp)
+                }
             }
-            LoginMethod.PHONE -> {
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Gradient Login Button
+            GradientButtonLarge(
+                text = "Sign In",
+                onClick = onLogin,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !viewModel.isLoading && !viewModel.biometricLoginInProgress,
+                isLoading = viewModel.isLoading
+            )
+        } else {
+            // PHONE OTP FLOW
+            if (!viewModel.isOtpSent) {
                 // Phone Field
                 OutlinedTextField(
                     value = viewModel.formState.phone,
@@ -298,53 +395,300 @@ private fun LoginForm(
                         cursorColor = Primary
                     )
                 )
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                // Gradient Send OTP Button
+                GradientButtonLarge(
+                    text = "Send Secure Code",
+                    onClick = onSendOtp,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !viewModel.isLoading,
+                    isLoading = viewModel.isLoading
+                )
+            } else {
+                // OTP Verification Field
+                Text(
+                    text = "We sent a safe 6-digit code to ${viewModel.formState.phone}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                OutlinedTextField(
+                    value = viewModel.otpCode,
+                    onValueChange = { viewModel.updateOtpCode(it) },
+                    label = { Text("6-Digit Code") },
+                    placeholder = { Text("123456", color = TextMuted) },
+                    leadingIcon = {
+                        Icon(Icons.Default.Lock, contentDescription = null, tint = Primary)
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Primary,
+                        unfocusedBorderColor = SurfaceVariant,
+                        focusedLabelColor = Primary,
+                        cursorColor = Primary
+                    )
+                )
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                // Verify Button
+                GradientButtonLarge(
+                    text = "Verify & Sign In",
+                    onClick = onVerifyOtp,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !viewModel.isLoading && viewModel.otpCode.length == 6,
+                    isLoading = viewModel.isLoading
+                )
+                
+                // Resend Code
+                Spacer(modifier = Modifier.height(12.dp))
+                TextButton(
+                    onClick = onSendOtp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Resend Code", color = Primary)
+                }
             }
         }
         
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        // Password Field
-        OutlinedTextField(
-            value = viewModel.formState.password,
-            onValueChange = { viewModel.updatePassword(it) },
-            label = { Text("Password") },
-            placeholder = { Text("••••••••", color = TextMuted) },
-            leadingIcon = {
-                Icon(Icons.Default.Lock, contentDescription = null, tint = Primary)
-            },
-            trailingIcon = {
-                IconButton(onClick = { viewModel.togglePasswordVisibility() }) {
-                    Icon(
-                        imageVector = if (viewModel.showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = if (viewModel.showPassword) "Hide password" else "Show password",
-                        tint = TextSecondary
-                    )
-                }
-            },
-            visualTransformation = if (viewModel.showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            singleLine = true,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Primary,
-                unfocusedBorderColor = SurfaceVariant,
-                focusedLabelColor = Primary,
-                cursorColor = Primary
+        // Biometric Login Section — ALWAYS show when biometric hardware is available
+        if (viewModel.isBiometricAvailable) {
+            Spacer(modifier = Modifier.height(20.dp))
+            
+            // Divider with "or login with"
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Divider(
+                    modifier = Modifier.weight(1f),
+                    color = SurfaceVariant,
+                    thickness = 1.dp
+                )
+                Text(
+                    text = "  or  ",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+                Divider(
+                    modifier = Modifier.weight(1f),
+                    color = SurfaceVariant,
+                    thickness = 1.dp
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(20.dp))
+            
+            // Fingerprint Button with pulsing animation
+            BiometricLoginButton(
+                onClick = {
+                    if (viewModel.isBiometricEnrolled) {
+                        // Already enrolled — do biometric login
+                        onBiometricLogin()
+                    } else {
+                        // Not enrolled — notify user to log in manually to enable
+                        viewModel.showError("Sign in with password first to enable fingerprint login.")
+                    }
+                },
+                isLoading = viewModel.biometricLoginInProgress
             )
-        )
+            
+            // "Use Password instead" link
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(
+                onClick = { /* Already showing password form above */ },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Use Password instead",
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.bodySmall,
+                    textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Animated fingerprint login button with a pulsing glow effect.
+ */
+@Composable
+private fun BiometricLoginButton(
+    onClick: () -> Unit,
+    isLoading: Boolean
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "biometric_pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse_scale"
+    )
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse_alpha"
+    )
+    
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            contentAlignment = Alignment.Center
+        ) {
+            // Outer glow ring (pulsing)
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .scale(pulseScale)
+                    .alpha(pulseAlpha)
+                    .clip(CircleShape)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Primary.copy(alpha = 0.3f),
+                                Color.Transparent
+                            )
+                        )
+                    )
+            )
+            
+            // Fingerprint icon button
+            Surface(
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(CircleShape)
+                    .clickable(enabled = !isLoading) { onClick() },
+                shape = CircleShape,
+                color = Color.Transparent
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            brush = Brush.linearGradient(PrimaryGradientColors),
+                            shape = CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(28.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Fingerprint,
+                            contentDescription = "Login with fingerprint",
+                            modifier = Modifier.size(32.dp),
+                            tint = Color.White
+                        )
+                    }
+                }
+            }
+        }
         
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(10.dp))
         
-        // Gradient Login Button
-        GradientButtonLarge(
-            text = "Sign In",
-            onClick = onLogin,
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !viewModel.isLoading,
-            isLoading = viewModel.isLoading
+        Text(
+            text = if (isLoading) "Verifying..." else "Tap to login with Fingerprint",
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary
         )
     }
+}
+
+/**
+ * Dialog shown after a successful password login, asking the user
+ * if they want to enable biometric (fingerprint) login for next time.
+ */
+@Composable
+private fun BiometricEnrollmentDialog(
+    onEnable: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(
+                        brush = Brush.linearGradient(PrimaryGradientColors)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Fingerprint,
+                    contentDescription = null,
+                    modifier = Modifier.size(32.dp),
+                    tint = Color.White
+                )
+            }
+        },
+        title = {
+            Text(
+                text = "Enable Fingerprint Login?",
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+        },
+        text = {
+            Text(
+                text = "Sign in faster next time using your fingerprint. " +
+                    "Your credentials will be securely encrypted on this device.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+                textAlign = TextAlign.Center
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onEnable,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Primary
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(
+                    Icons.Default.Fingerprint,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Enable")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Not Now", color = TextSecondary)
+            }
+        },
+        containerColor = Surface,
+        titleContentColor = TextPrimary,
+        textContentColor = TextSecondary,
+        shape = RoundedCornerShape(20.dp)
+    )
 }
 
 @Composable

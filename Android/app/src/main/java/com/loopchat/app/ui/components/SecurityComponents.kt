@@ -25,27 +25,65 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+import androidx.compose.ui.platform.LocalContext
+import androidx.fragment.app.FragmentActivity
+import android.content.Context
+import android.content.ContextWrapper
+import android.widget.Toast
+
+/**
+ * Helper to find the FragmentActivity from a given context.
+ * Useful because LocalContext.current can return a ContextWrapper.
+ */
+fun Context.findActivity(): FragmentActivity? {
+    var context = this
+    while (context is ContextWrapper) {
+        if (context is FragmentActivity) return context
+        context = context.baseContext
+    }
+    return null
+}
+
 /**
  * Security Settings Screen
  */
 @Composable
 fun SecuritySettingsScreen(
     settings: SecuritySettings,
+    errorMessage: String? = null,
+    isLoading: Boolean = false,
     onEnableTwoStep: (String, String?) -> Unit,
     onDisableTwoStep: () -> Unit,
-    onEnableBiometric: () -> Unit,
-    onDisableBiometric: () -> Unit,
+    onToggleSecurityNotifications: (Boolean) -> Unit,
+    onBiometricSetupClick: () -> Unit,
     onActiveSessionsClick: () -> Unit,
+    onClearError: () -> Unit = {},
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showTwoStepDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    val snackbarHostState = remember { SnackbarHostState() }
+    
+    // Show error message via Snackbar if it arrives
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            onClearError()
+        }
+    }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Background)
-    ) {
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        modifier = modifier.fillMaxSize(),
+        containerColor = Background
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
         // Header
         Surface(
             color = Surface,
@@ -97,14 +135,8 @@ fun SecuritySettingsScreen(
                     icon = Icons.Default.Fingerprint,
                     title = "Biometric Lock",
                     subtitle = if (settings.biometric_lock_enabled) "Enabled" else "Lock app with fingerprint",
-                    isEnabled = settings.biometric_lock_enabled,
-                    onClick = {
-                        if (settings.biometric_lock_enabled) {
-                            onDisableBiometric()
-                        } else {
-                            onEnableBiometric()
-                        }
-                    }
+                    isEnabled = settings.biometric_lock_enabled || settings.biometric_login_enabled,
+                    onClick = onBiometricSetupClick
                 )
             }
             
@@ -144,7 +176,7 @@ fun SecuritySettingsScreen(
                         }
                         Switch(
                             checked = settings.security_notifications_enabled,
-                            onCheckedChange = { /* Handle toggle */ },
+                            onCheckedChange = onToggleSecurityNotifications,
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.White,
                                 checkedTrackColor = Primary
@@ -166,8 +198,9 @@ fun SecuritySettingsScreen(
             }
         }
     }
-    
-    if (showTwoStepDialog) {
+}
+
+if (showTwoStepDialog) {
         TwoStepSetupDialog(
             onSetupComplete = { pin, email ->
                 onEnableTwoStep(pin, email)

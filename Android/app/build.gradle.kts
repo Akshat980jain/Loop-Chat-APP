@@ -123,6 +123,12 @@ dependencies {
     // DataStore for session persistence
     implementation("androidx.datastore:datastore-preferences:1.0.0")
     
+    // Biometric Authentication
+    implementation("androidx.biometric:biometric:1.2.0-alpha05")
+    
+    // EncryptedSharedPreferences for secure credential storage
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    
     // CameraX for video call preview
     implementation("androidx.camera:camera-core:1.3.1")
     implementation("androidx.camera:camera-camera2:1.3.1")

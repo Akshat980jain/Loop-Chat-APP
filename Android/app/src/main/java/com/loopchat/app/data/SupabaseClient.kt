@@ -121,7 +121,11 @@ object SupabaseClient {
     /**
      * Refresh the session using refresh token
      */
-    private suspend fun refreshSession(context: Context, refreshToken: String): Boolean {
+    /**
+     * Refresh the session using refresh token.
+     * Made public to support biometric login flow.
+     */
+    suspend fun refreshSession(context: Context, refreshToken: String): Boolean {
         return try {
             val response = httpClient.post("$supabaseUrl/auth/v1/token?grant_type=refresh_token") {
                 contentType(ContentType.Application.Json)
@@ -166,6 +170,63 @@ object SupabaseClient {
                     json.decodeFromString<AuthError>(errorBody).message
                 } catch (e: Exception) {
                     "Login failed"
+                }
+                AuthResult.Error(errorMessage)
+            }
+        } catch (e: Exception) {
+            AuthResult.Error(e.message ?: "Network error")
+        }
+    }
+    /**
+     * Send OTP to phone number
+     */
+    suspend fun sendPhoneOtp(phone: String): AuthResult {
+        return try {
+            val response = httpClient.post("$supabaseUrl/auth/v1/otp") {
+                contentType(ContentType.Application.Json)
+                header("apikey", supabaseKey)
+                setBody(SendOtpRequest(phone = phone))
+            }
+            
+            if (response.status.isSuccess()) {
+                AuthResult.Success("OTP sent")
+            } else {
+                val errorBody = response.bodyAsText()
+                val errorMessage = try {
+                    json.decodeFromString<AuthError>(errorBody).message
+                } catch (e: Exception) {
+                    "Failed to send OTP"
+                }
+                AuthResult.Error(errorMessage)
+            }
+        } catch (e: Exception) {
+            AuthResult.Error(e.message ?: "Network error")
+        }
+    }
+    
+    /**
+     * Verify OTP for phone number
+     */
+    suspend fun verifyPhoneOtp(phone: String, token: String, context: Context): AuthResult {
+        return try {
+            val response = httpClient.post("$supabaseUrl/auth/v1/verify") {
+                contentType(ContentType.Application.Json)
+                header("apikey", supabaseKey)
+                setBody(VerifyOtpRequest(phone = phone, token = token))
+            }
+            
+            if (response.status.isSuccess()) {
+                val authResponse: AuthResponse = response.body()
+                saveSession(context, authResponse)
+                // Track login session
+                trackSession(context)
+                AuthResult.Success(authResponse.user?.id ?: "")
+            } else {
+                val errorBody = response.bodyAsText()
+                val errorMessage = try {
+                    json.decodeFromString<AuthError>(errorBody).message
+                } catch (e: Exception) {
+                    "Invalid verification code"
                 }
                 AuthResult.Error(errorMessage)
             }
@@ -312,6 +373,15 @@ object SupabaseClient {
     }
     
     fun getAccessToken(): String? = accessToken
+    
+    /**
+     * Get the cached refresh token for biometric enrollment.
+     * Reads from DataStore.
+     */
+    suspend fun getRefreshToken(context: Context): String? {
+        val prefs = context.dataStore.data.first()
+        return prefs[REFRESH_TOKEN_KEY]
+    }
     
     /**
      * SHA-256 hash for token comparison
@@ -611,4 +681,17 @@ data class UserSessionInfo(
     val created_at: String? = null,
     val last_active: String? = null,
     val is_current: Boolean = false
+)
+
+@Serializable
+data class SendOtpRequest(
+    val phone: String,
+    val create_user: Boolean = true
+)
+
+@Serializable
+data class VerifyOtpRequest(
+    val type: String = "sms",
+    val phone: String,
+    val token: String
 )

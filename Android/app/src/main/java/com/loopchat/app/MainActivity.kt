@@ -6,7 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
 
 import androidx.activity.enableEdgeToEdge
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     
     companion object {
         private const val TAG = "MainActivity"

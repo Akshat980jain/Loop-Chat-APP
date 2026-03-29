@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "allowJs": true,
+    "baseUrl": ".",
+    "paths": {
+      "https://deno.land/std@0.168.0/http/server.ts": ["./deno-shims/server.d.ts"],
+      "https://esm.sh/@supabase/supabase-js@2.38.4": ["./deno-shims/supabase.d.ts"]
+    }
+  },
+  "files": [
+    "./deno-shims/deno.d.ts"
+  ],
+  "include": [
+    "./**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}
