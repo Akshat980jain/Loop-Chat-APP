@@ -375,6 +375,33 @@ object SupabaseClient {
     fun getAccessToken(): String? = accessToken
     
     /**
+     * Save a session returned by the passkey-login-verify Edge Function.
+     * This is similar to saveSession but accepts raw values instead of an AuthResponse.
+     */
+    suspend fun savePasskeySession(
+        context: Context,
+        accessToken: String,
+        refreshToken: String,
+        userId: String?,
+        email: String?,
+        phone: String?
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[ACCESS_TOKEN_KEY] = accessToken
+            prefs[REFRESH_TOKEN_KEY] = refreshToken
+            userId?.let { prefs[USER_ID_KEY] = it }
+            email?.let { prefs[USER_EMAIL_KEY] = it }
+            phone?.let { prefs[USER_PHONE_KEY] = it }
+        }
+        
+        this.accessToken = accessToken
+        currentUserId = userId
+        currentEmail = email
+        currentPhone = phone
+        isAuthenticated = true
+    }
+    
+    /**
      * Get the cached refresh token for biometric enrollment.
      * Reads from DataStore.
      */

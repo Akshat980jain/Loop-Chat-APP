@@ -27,6 +27,11 @@ import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
 import com.loopchat.app.data.SecuritySettings
 import com.loopchat.app.ui.theme.*
+import com.loopchat.app.ui.theme.Background
+import com.loopchat.app.ui.theme.Primary
+import com.loopchat.app.ui.theme.Secondary
+import com.loopchat.app.ui.theme.TextPrimary
+import com.loopchat.app.ui.theme.TextSecondary
 
 /**
  * Premium Biometric Setup Screen.
@@ -41,17 +46,24 @@ fun BiometricSetupScreen(
     onDisableLogin: () -> Unit,
     onEnableLock: (FragmentActivity) -> Unit,
     onDisableLock: () -> Unit,
+    onRegisterPasskey: (FragmentActivity) -> Unit,
+    isPasskeyRegistering: Boolean = false,
+    errorMessage: String? = null,
+    successMessage: String? = null,
+    onClearMessages: () -> Unit = {},
     onBackClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val activity = remember(context) { 
-        var c = context
-        while (c is android.content.ContextWrapper) {
-            if (c is FragmentActivity) break
+    // Resolve the FragmentActivity from the current context chain.
+    // BiometricPrompt requires a FragmentActivity.
+    val activity: FragmentActivity? = remember(context) {
+        var c: android.content.Context = context
+        while (c is android.content.ContextWrapper && c !is FragmentActivity) {
             c = c.baseContext
         }
         c as? FragmentActivity
     }
+    var activityMissingError by remember { mutableStateOf(false) }
 
     // Fingerprint pulsing animation
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -165,7 +177,13 @@ fun BiometricSetupScreen(
                 icon = Icons.Default.Fingerprint,
                 isEnabled = settings.biometric_login_enabled,
                 onToggle = { enabled ->
-                    if (enabled) activity?.let { onEnableLogin(it) } else onDisableLogin()
+                    if (enabled) {
+                        val act = activity
+                        if (act != null) onEnableLogin(act)
+                        else activityMissingError = true
+                    } else {
+                        onDisableLogin()
+                    }
                 }
             )
 
@@ -177,10 +195,136 @@ fun BiometricSetupScreen(
                 icon = Icons.Default.Lock,
                 isEnabled = settings.biometric_lock_enabled,
                 onToggle = { enabled ->
-                    if (enabled) activity?.let { onEnableLock(it) } else onDisableLock()
+                    if (enabled) {
+                        val act = activity
+                        if (act != null) onEnableLock(act)
+                        else activityMissingError = true
+                    } else {
+                        onDisableLock()
+                    }
                 }
             )
-            
+
+            // Show error if the activity could not be resolved
+            if (activityMissingError) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { activityMissingError = false },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = { activityMissingError = false }) {
+                            Text("OK")
+                        }
+                    },
+                    title = { Text("Error") },
+                    text = { Text("Could not start biometric authentication. Please restart the app and try again.") }
+                )
+            }
+
+            // Show error message
+            if (errorMessage != null) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { onClearMessages() },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = { onClearMessages() }) {
+                            Text("OK")
+                        }
+                    },
+                    title = { Text("Error") },
+                    text = { Text(errorMessage ?: "") }
+                )
+            }
+
+            // Show success message
+            if (successMessage != null) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { onClearMessages() },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = { onClearMessages() }) {
+                            Text("OK")
+                        }
+                    },
+                    title = { Text("Success") },
+                    text = { Text(successMessage ?: "") }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ─── Passkey Registration Card ───────────────────────────────
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Surface,
+                shape = RoundedCornerShape(16.dp),
+                tonalElevation = 2.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    brush = Brush.linearGradient(
+                                        listOf(Primary.copy(alpha = 0.2f), Secondary.copy(alpha = 0.15f))
+                                    )
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PhoneAndroid,
+                                contentDescription = null,
+                                tint = Primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Cross-Device Passkey",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = "Use your fingerprint to log in on any device synced with your Google account.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            val act = activity
+                            if (act != null) onRegisterPasskey(act)
+                            else activityMissingError = true
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !isPasskeyRegistering,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Primary
+                        )
+                    ) {
+                        if (isPasskeyRegistering) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        Text(
+                            text = if (isPasskeyRegistering) "Registering..." else "Register Passkey",
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(48.dp))
             
             // Helpful Tip
@@ -197,7 +341,9 @@ fun BiometricSetupScreen(
                     Icon(Icons.Default.Info, contentDescription = null, tint = Primary, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
-                        text = "Biometric data is stored securely on your device and is never sent to our servers.",
+                        text = "Your fingerprint identity is unique to Loop Chat. " +
+                            "If you add or remove fingerprints on your device, " +
+                            "you'll need to re-enable fingerprint login with your password.",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary
                     )

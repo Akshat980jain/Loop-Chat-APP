@@ -176,6 +176,11 @@ fun AuthScreen(
                                     viewModel.attemptBiometricLogin(act, onAuthSuccess)
                                 }
                             },
+                            onPasskeyLogin = {
+                                activity?.let { act ->
+                                    viewModel.attemptPasskeyLogin(act, onAuthSuccess)
+                                }
+                            },
                             onVerifyOtp = { viewModel.verifyOtp(context, onAuthSuccess) },
                             onSendOtp = { viewModel.sendOtp() }
                         )
@@ -282,6 +287,7 @@ private fun LoginForm(
     viewModel: AuthViewModel,
     onLogin: () -> Unit,
     onBiometricLogin: () -> Unit,
+    onPasskeyLogin: () -> Unit,
     onVerifyOtp: () -> Unit,
     onSendOtp: () -> Unit
 ) {
@@ -460,11 +466,44 @@ private fun LoginForm(
             }
         }
         
-        // Biometric Login Section — ALWAYS show when biometric hardware is available
-        if (viewModel.isBiometricAvailable) {
+        // Fingerprint enrollment changed warning
+        if (viewModel.isBiometricKeyInvalidated) {
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFFFFF3E0)
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Fingerprint,
+                        contentDescription = null,
+                        tint = Color(0xFFE65100),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Your device fingerprints have changed. Sign in with your password to re-enable fingerprint login.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF4E342E)
+                    )
+                }
+            }
+        }
+        
+        // Biometric Login Section — only show when the user has actually enrolled
+        // (i.e., credentials are stored in BiometricCredentialStore).
+        // isBiometricEnrolled = hasStoredCredentials AND isBiometricAvailable.
+        if (viewModel.isBiometricEnrolled) {
             Spacer(modifier = Modifier.height(20.dp))
             
-            // Divider with "or login with"
+            // Divider with "or"
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -488,17 +527,9 @@ private fun LoginForm(
             
             Spacer(modifier = Modifier.height(20.dp))
             
-            // Fingerprint Button with pulsing animation
+            // Fingerprint Button — only reachable when enrolled, so no error branch needed
             BiometricLoginButton(
-                onClick = {
-                    if (viewModel.isBiometricEnrolled) {
-                        // Already enrolled — do biometric login
-                        onBiometricLogin()
-                    } else {
-                        // Not enrolled — notify user to log in manually to enable
-                        viewModel.showError("Sign in with password first to enable fingerprint login.")
-                    }
-                },
+                onClick = onBiometricLogin,
                 isLoading = viewModel.biometricLoginInProgress
             )
             
@@ -515,6 +546,67 @@ private fun LoginForm(
                     textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
                 )
             }
+        }
+
+        // ─── Passkey Login Section ─────────────────────────────────────
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Divider with "or"
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Divider(
+                modifier = Modifier.weight(1f),
+                color = SurfaceVariant,
+                thickness = 1.dp
+            )
+            Text(
+                text = "  or  ",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary
+            )
+            Divider(
+                modifier = Modifier.weight(1f),
+                color = SurfaceVariant,
+                thickness = 1.dp
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Passkey Login Button
+        OutlinedButton(
+            onClick = onPasskeyLogin,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            enabled = !viewModel.passkeyLoginInProgress,
+            shape = RoundedCornerShape(12.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Primary.copy(alpha = 0.5f))
+        ) {
+            if (viewModel.passkeyLoginInProgress) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = Primary,
+                    strokeWidth = 2.dp
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+            } else {
+                Icon(
+                    imageVector = Icons.Default.Fingerprint,
+                    contentDescription = null,
+                    tint = Primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+            Text(
+                text = "Sign in with Passkey",
+                color = Primary,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
         }
     }
 }

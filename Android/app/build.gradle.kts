@@ -129,6 +129,10 @@ dependencies {
     // EncryptedSharedPreferences for secure credential storage
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     
+    // Credential Manager for Passkey (WebAuthn) support
+    implementation("androidx.credentials:credentials:1.2.2")
+    implementation("androidx.credentials:credentials-play-services-auth:1.2.2")
+    
     // CameraX for video call preview
     implementation("androidx.camera:camera-core:1.3.1")
     implementation("androidx.camera:camera-camera2:1.3.1")

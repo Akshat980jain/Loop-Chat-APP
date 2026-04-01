@@ -1,0 +1,13 @@
+[{
+  "relation": [
+    "delegate_permission/common.handle_all_urls",
+    "delegate_permission/common.get_login_creds"
+  ],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.loopchat.app",
+    "sha256_cert_fingerprints": [
+      "4F:6C:19:AF:B3:C5:54:9A:19:17:5D:61:16:A3:94:07:53:98:F9:3E:E1:65:57:8C:FC:6B:68:CC:CB:11:07:B8"
+    ]
+  }
+}]

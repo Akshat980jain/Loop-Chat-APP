@@ -28,4 +28,11 @@
     <string name="settings_account">Account</string>
     <string name="settings_qr_code">QR Code</string>
     <string name="settings_qr_desc">Scan or show your Loop Chat code</string>
+
+    <!-- App Links / Passkeys -->
+    <string name="asset_statements" translatable="false">
+    [{
+      "include": "https://loop-chat.vercel.app/.well-known/assetlinks.json"
+    }]
+    </string>
 </resources>

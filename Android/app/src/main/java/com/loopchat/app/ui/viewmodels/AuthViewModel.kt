@@ -13,6 +13,7 @@ import com.loopchat.app.data.BiometricAuthManager
 import com.loopchat.app.data.BiometricCredentialStore
 import com.loopchat.app.data.PrivacySecurityRepository
 import com.loopchat.app.data.SupabaseClient
+import com.loopchat.app.data.PasskeyManager
 import kotlinx.coroutines.launch
 
 enum class AuthView {
@@ -102,6 +103,15 @@ class AuthViewModel : ViewModel() {
     var hasAutoPrompted by mutableStateOf(false)
         private set
 
+    /**
+     * True when the Keystore key has been invalidated because the device's
+     * biometric enrollment changed (fingerprints added/removed). The UI
+     * should show a message asking the user to sign in with their password
+     * to re-enroll fingerprint login.
+     */
+    var isBiometricKeyInvalidated by mutableStateOf(false)
+        private set
+
     /** Pending success action to defer navigation until after dialog */
     private var pendingAuthSuccessAction: (() -> Unit)? = null
     
@@ -110,22 +120,45 @@ class AuthViewModel : ViewModel() {
     // ============================================
     
     /**
-     * Check biometric availability and enrollment status.
+     * Check biometric availability, enrollment status, and key validity.
      * Should be called once when the auth screen loads.
      */
     fun checkBiometricStatus(activity: FragmentActivity) {
         val status = BiometricAuthManager.canAuthenticate(activity)
         isBiometricAvailable = (status == BiometricAuthManager.BiometricStatus.AVAILABLE)
-        isBiometricEnrolled = isBiometricAvailable && 
+        
+        val hasCredentials = isBiometricAvailable && 
             BiometricCredentialStore.hasStoredCredentials(activity)
         
-        Log.d(TAG, "Biometric status: available=$isBiometricAvailable, enrolled=$isBiometricEnrolled")
+        if (hasCredentials) {
+            // Check if the Keystore key is still valid (biometrics unchanged)
+            val keyValid = BiometricAuthManager.isKeyValid()
+            if (keyValid) {
+                isBiometricEnrolled = true
+                isBiometricKeyInvalidated = false
+            } else {
+                // Key invalidated — biometric enrollment changed on device
+                isBiometricEnrolled = false
+                isBiometricKeyInvalidated = true
+                Log.w(TAG, "Biometric key invalidated — fingerprints changed on device")
+                // Clear stale credentials
+                BiometricCredentialStore.clearCredentials(activity)
+            }
+        } else {
+            isBiometricEnrolled = false
+        }
+        
+        Log.d(TAG, "Biometric status: available=$isBiometricAvailable, enrolled=$isBiometricEnrolled, keyInvalidated=$isBiometricKeyInvalidated")
     }
     
     /**
      * Attempt to login using stored biometric credentials.
-     * This triggers the system biometric prompt, then uses the stored
-     * refresh token to create a new session.
+     *
+     * This triggers a **crypto-based** biometric prompt: the biometric scan
+     * unlocks the Keystore key, which decrypts the stored Supabase refresh
+     * token. If the device's biometric enrollment has changed since the user
+     * enrolled in Loop Chat, the key will be permanently invalidated and the
+     * user must re-enter their password.
      */
     fun attemptBiometricLogin(
         activity: FragmentActivity,
@@ -136,27 +169,47 @@ class AuthViewModel : ViewModel() {
             return
         }
         
+        val iv = BiometricCredentialStore.getStoredIv(activity)
+        if (iv == null) {
+            errorMessage = "Biometric data corrupted. Please sign in with password."
+            isBiometricEnrolled = false
+            BiometricCredentialStore.clearCredentials(activity)
+            return
+        }
+        
         biometricLoginInProgress = true
         errorMessage = null
         
-        BiometricAuthManager.authenticate(
+        BiometricAuthManager.authenticateForDecryption(
             activity = activity,
+            iv = iv,
             title = "Loop Chat",
             subtitle = "Use your fingerprint to sign in",
             negativeButtonText = "Use Password",
-            onSuccess = {
-                // Biometric verified — now use the stored refresh token
-                viewModelScope.launch {
-                    performBiometricLogin(activity, onSuccess)
+            onResult = { result ->
+                when (result) {
+                    is BiometricAuthManager.CryptoAuthResult.Success -> {
+                        // Biometric verified & Cipher unlocked — decrypt credentials
+                        viewModelScope.launch {
+                            performBiometricLogin(activity, result.cipher, onSuccess)
+                        }
+                    }
+                    is BiometricAuthManager.CryptoAuthResult.Cancelled -> {
+                        biometricLoginInProgress = false
+                        // User chose password — do nothing
+                    }
+                    is BiometricAuthManager.CryptoAuthResult.Error -> {
+                        biometricLoginInProgress = false
+                        errorMessage = result.message
+                    }
+                    is BiometricAuthManager.CryptoAuthResult.KeyInvalidated -> {
+                        biometricLoginInProgress = false
+                        isBiometricEnrolled = false
+                        isBiometricKeyInvalidated = true
+                        BiometricCredentialStore.clearCredentials(activity)
+                        errorMessage = "Your device fingerprints have changed. Please sign in with your password to re-enable fingerprint login."
+                    }
                 }
-            },
-            onError = { error ->
-                biometricLoginInProgress = false
-                errorMessage = error
-            },
-            onFallback = {
-                biometricLoginInProgress = false
-                // User chose to use password — do nothing, they see the form
             }
         )
     }
@@ -167,13 +220,14 @@ class AuthViewModel : ViewModel() {
      */
     private suspend fun performBiometricLogin(
         context: Context,
+        cipher: javax.crypto.Cipher,
         onSuccess: () -> Unit
     ) {
-        val credentials = BiometricCredentialStore.getStoredCredentials(context)
+        val credentials = BiometricCredentialStore.getStoredCredentials(context, cipher)
         
         if (credentials == null) {
             biometricLoginInProgress = false
-            errorMessage = "Stored credentials not found. Please sign in with password."
+            errorMessage = "Failed to decrypt stored credentials. Please sign in with password."
             isBiometricEnrolled = false
             BiometricCredentialStore.clearCredentials(context)
             return
@@ -186,11 +240,12 @@ class AuthViewModel : ViewModel() {
         if (refreshed) {
             Log.d(TAG, "Biometric login successful")
             
-            // Update the stored refresh token with the new one
-            val newRefreshToken = SupabaseClient.getRefreshToken(context)
-            if (newRefreshToken != null) {
-                BiometricCredentialStore.updateRefreshToken(context, newRefreshToken)
-            }
+            // Note: We do NOT update the stored refresh token here because
+            // re-encryption would require another biometric prompt. The original
+            // token stored at enrollment time continues to work for refreshing
+            // sessions. If Supabase eventually invalidates it, the user will
+            // need to re-enter their password (which is the correct behavior).
+            BiometricCredentialStore.markTokenPotentiallyStale(context)
             
             // Reset failed attempts
             failedAttempts = 0
@@ -221,55 +276,75 @@ class AuthViewModel : ViewModel() {
     
     /**
      * Enable biometric login after a successful password sign-in.
-     * Triggers the biometric prompt for enrollment confirmation,
-     * then stores the current refresh token encrypted.
+     *
+     * Generates a new Keystore key, triggers a crypto-based biometric prompt,
+     * and stores the encrypted refresh token on success.
      */
     fun enableBiometricLogin(activity: FragmentActivity) {
-        BiometricAuthManager.authenticate(
+        // Generate a fresh Keystore key for this enrollment
+        BiometricAuthManager.generateKey()
+        
+        BiometricAuthManager.authenticateForEncryption(
             activity = activity,
-            title = "Enable Biometric Login",
+            title = "Enable Fingerprint Login",
             subtitle = "Verify your fingerprint to enable quick login",
             negativeButtonText = "Cancel",
-            onSuccess = {
-                viewModelScope.launch {
-                    val refreshToken = SupabaseClient.getRefreshToken(activity)
-                    val userId = SupabaseClient.currentUserId
-                    val email = SupabaseClient.currentEmail
-                    
-                    if (refreshToken != null && userId != null) {
-                        BiometricCredentialStore.storeCredentials(
-                            context = activity,
-                            userId = userId,
-                            email = email ?: "",
-                            refreshToken = refreshToken
-                        )
-                        
-                        // Update backend setting
-                        PrivacySecurityRepository.enableBiometricLogin(SupabaseClient.httpClient)
-                        
-                        isBiometricEnrolled = true
+            onResult = { result ->
+                when (result) {
+                    is BiometricAuthManager.CryptoAuthResult.Success -> {
+                        viewModelScope.launch {
+                            val refreshToken = SupabaseClient.getRefreshToken(activity)
+                            val userId = SupabaseClient.currentUserId
+                            val email = SupabaseClient.currentEmail
+                            
+                            if (refreshToken != null && userId != null) {
+                                BiometricCredentialStore.storeCredentials(
+                                    context = activity,
+                                    cipher = result.cipher,
+                                    userId = userId,
+                                    email = email ?: "",
+                                    refreshToken = refreshToken
+                                )
+                                
+                                // Update backend setting
+                                PrivacySecurityRepository.enableBiometricLogin(SupabaseClient.httpClient)
+                                
+                                isBiometricEnrolled = true
+                                isBiometricKeyInvalidated = false
+                                isBiometricEnrollDialogVisible = false
+                                Log.d(TAG, "Biometric login enabled (crypto-bound)")
+                                pendingAuthSuccessAction?.invoke()
+                                pendingAuthSuccessAction = null
+                            } else {
+                                errorMessage = "Failed to enable biometric login"
+                                isBiometricEnrollDialogVisible = false
+                                pendingAuthSuccessAction?.invoke()
+                                pendingAuthSuccessAction = null
+                            }
+                        }
+                    }
+                    is BiometricAuthManager.CryptoAuthResult.Cancelled -> {
+                        Log.d(TAG, "Biometric enrollment cancelled by user")
                         isBiometricEnrollDialogVisible = false
-                        Log.d(TAG, "Biometric login enabled successfully")
+                        BiometricAuthManager.deleteKey()
                         pendingAuthSuccessAction?.invoke()
                         pendingAuthSuccessAction = null
-                    } else {
-                        errorMessage = "Failed to enable biometric login"
+                    }
+                    is BiometricAuthManager.CryptoAuthResult.Error -> {
+                        Log.w(TAG, "Biometric enrollment failed: ${result.message}")
                         isBiometricEnrollDialogVisible = false
+                        BiometricAuthManager.deleteKey()
+                        pendingAuthSuccessAction?.invoke()
+                        pendingAuthSuccessAction = null
+                    }
+                    is BiometricAuthManager.CryptoAuthResult.KeyInvalidated -> {
+                        Log.w(TAG, "Key invalidated during enrollment — should not happen with fresh key")
+                        isBiometricEnrollDialogVisible = false
+                        errorMessage = "Biometric setup failed. Please try again."
                         pendingAuthSuccessAction?.invoke()
                         pendingAuthSuccessAction = null
                     }
                 }
-            },
-            onError = { error ->
-                Log.w(TAG, "Biometric enrollment failed: $error")
-                isBiometricEnrollDialogVisible = false
-                pendingAuthSuccessAction?.invoke()
-                pendingAuthSuccessAction = null
-            },
-            onFallback = {
-                isBiometricEnrollDialogVisible = false
-                pendingAuthSuccessAction?.invoke()
-                pendingAuthSuccessAction = null
             }
         )
     }
@@ -282,6 +357,7 @@ class AuthViewModel : ViewModel() {
             BiometricCredentialStore.clearCredentials(context)
             PrivacySecurityRepository.disableBiometricLogin(SupabaseClient.httpClient)
             isBiometricEnrolled = false
+            isBiometricKeyInvalidated = false
             Log.d(TAG, "Biometric login disabled")
         }
     }
@@ -317,6 +393,86 @@ class AuthViewModel : ViewModel() {
         errorMessage = message
     }
     
+    // ============================================
+    // PASSKEY LOGIN (Cross-Device Biometric)
+    // ============================================
+
+    /** Whether a passkey login attempt is in progress */
+    var passkeyLoginInProgress by mutableStateOf(false)
+        private set
+
+    /**
+     * Attempt to log in using a Passkey (WebAuthn).
+     *
+     * The user types their email/phone, then taps the "Passkey" button.
+     * The CredentialManager handles the biometric prompt and key retrieval.
+     * On success, we receive session tokens and log the user in.
+     */
+    fun attemptPasskeyLogin(
+        activity: FragmentActivity,
+        onSuccess: () -> Unit
+    ) {
+        val email = formState.email.takeIf { it.isNotBlank() }
+        val phone = formState.phone.takeIf { it.isNotBlank() }
+
+        if (email == null && phone == null) {
+            errorMessage = "Please enter your email or phone to use passkey login."
+            return
+        }
+
+        passkeyLoginInProgress = true
+        errorMessage = null
+
+        viewModelScope.launch {
+            val result = PasskeyManager.loginWithPasskey(
+                context = activity,
+                httpClient = SupabaseClient.httpClient,
+                email = email,
+                phone = phone
+            )
+
+            passkeyLoginInProgress = false
+
+            when (result) {
+                is PasskeyManager.LoginResult.Success -> {
+                    Log.d(TAG, "Passkey login successful")
+
+                    // Save the session just like a normal login
+                    SupabaseClient.savePasskeySession(
+                        context = activity,
+                        accessToken = result.accessToken,
+                        refreshToken = result.refreshToken,
+                        userId = result.userId,
+                        email = result.email,
+                        phone = result.phone
+                    )
+
+                    // Reset state
+                    failedAttempts = 0
+                    lockoutUntil = null
+                    lockoutCountdown = 0
+                    lockoutJob?.cancel()
+
+                    // Upload FCM and track session
+                    uploadFcmToken(activity)
+                    SupabaseClient.trackSession(activity)
+
+                    isLoading = false
+                    onSuccess()
+                }
+                is PasskeyManager.LoginResult.Cancelled -> {
+                    Log.d(TAG, "Passkey login cancelled")
+                }
+                is PasskeyManager.LoginResult.NoPasskeys -> {
+                    errorMessage = "No passkey found for this account. Sign in with password first, then register a passkey in Settings."
+                }
+                is PasskeyManager.LoginResult.Error -> {
+                    errorMessage = result.message
+                }
+            }
+        }
+    }
+
     // ============================================
     // EXISTING METHODS (unchanged logic)
     // ============================================

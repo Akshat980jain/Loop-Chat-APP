@@ -214,8 +214,9 @@ fun LoopChatNavigation(
                         scope.launch {
                             SupabaseClient.signOut(context)
                             IncomingCallManager.stopListening()
-                            BiometricCredentialStore.clearCredentials(context)
-                            prefs.edit().clear().apply()
+                            // NOTE: Do NOT clear BiometricCredentialStore or biometric prefs here.
+                            // Biometric login is designed to survive logout so the user can
+                            // sign back in with their fingerprint. Clear only on explicit disable.
                             isAuthenticated = false
                             isAppLocked = false
                             navController.navigate(Screen.Auth.route) { popUpTo(0) { inclusive = true } }
@@ -231,8 +232,9 @@ fun LoopChatNavigation(
                         scope.launch {
                             SupabaseClient.signOut(context)
                             IncomingCallManager.stopListening()
-                            BiometricCredentialStore.clearCredentials(context)
-                            prefs.edit().clear().apply()
+                            // NOTE: Do NOT clear BiometricCredentialStore or biometric prefs here.
+                            // Biometric login is designed to survive logout so the user can
+                            // sign back in with their fingerprint. Clear only on explicit disable.
                             isAuthenticated = false
                             isAppLocked = false
                             navController.navigate(Screen.Auth.route) { popUpTo(0) { inclusive = true } }
@@ -307,6 +309,11 @@ fun LoopChatNavigation(
                     onDisableLogin = { vm.disableBiometricLogin() },
                     onEnableLock = { vm.enableBiometricLock(it) },
                     onDisableLock = { vm.disableBiometricLock(); isAppLocked = false },
+                    onRegisterPasskey = { vm.registerPasskey(it) },
+                    isPasskeyRegistering = vm.passkeyRegistrationInProgress,
+                    errorMessage = vm.errorMessage,
+                    successMessage = vm.successMessage,
+                    onClearMessages = { vm.clearMessages() },
                     onBackClick = { navController.popBackStack() }
                 )
             }
@@ -384,8 +391,9 @@ fun LoopChatNavigation(
                 onSignOut = {
                     scope.launch {
                         SupabaseClient.signOut(context)
-                        BiometricCredentialStore.clearCredentials(context)
-                        prefs.edit().clear().apply()
+                        // NOTE: Do NOT clear BiometricCredentialStore or biometric prefs here.
+                        // The user signing out from the lock screen still wants fingerprint
+                        // login available on the next sign-in attempt.
                         isAuthenticated = false
                         isAppLocked = false
                         navController.navigate(Screen.Auth.route) { popUpTo(0) { inclusive = true } }

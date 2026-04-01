@@ -81,6 +81,11 @@
             android:foregroundServiceType="camera|microphone"
             android:exported="false" />
 
+        <!-- WebAuthn Passkeys Domain Association -->
+        <meta-data
+            android:name="asset_statements"
+            android:resource="@string/asset_statements" />
+
     </application>
 
 </manifest>
