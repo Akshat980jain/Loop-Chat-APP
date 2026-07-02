@@ -58,15 +58,51 @@ export const ChatArea = ({ isMobile = false, onBack, onMenuClick }: ChatAreaProp
     const fetchOtherParticipant = async () => {
       if (!selectedConversationId || !currentUserId) return;
 
-      console.log("Fetching other participant for:", { selectedConversationId, currentUserId });
+      console.log("Fetching other participant/group details for:", { selectedConversationId, currentUserId });
 
-      // First, get the other participant's user_id
+      // Check if this is a group conversation
+      const { data: convData, error: convError } = await supabase
+        .from("conversations")
+        .select("id, is_group, group_id")
+        .eq("id", selectedConversationId)
+        .single();
+
+      if (convError || !convData) {
+        console.error("Error fetching conversation details:", convError);
+        return;
+      }
+
+      if (convData.is_group && convData.group_id) {
+        const { data: groupData, error: groupError } = await supabase
+          .from("groups")
+          .select("id, name, avatar_url")
+          .eq("id", convData.group_id)
+          .single();
+
+        if (groupError) {
+          console.error("Error fetching group details:", groupError);
+        }
+
+        if (groupData) {
+          setOtherParticipant({
+            id: groupData.id,
+            user_id: "",
+            full_name: groupData.name,
+            username: groupData.name,
+            avatar_url: groupData.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(groupData.name)}`,
+            status: "group",
+          });
+        }
+        return;
+      }
+
+      // If it is a direct chat, get the other participant's user_id
       const { data: participantData, error: participantError } = await supabase
         .from("conversation_participants")
         .select("user_id")
         .eq("conversation_id", selectedConversationId)
         .neq("user_id", currentUserId)
-        .single();
+        .maybeSingle();
 
       console.log("Participant query result:", { participantData, participantError });
 
@@ -265,8 +301,8 @@ export const ChatArea = ({ isMobile = false, onBack, onMenuClick }: ChatAreaProp
             <h3 className="font-semibold text-foreground">
               {otherParticipant?.full_name || otherParticipant?.username || 'Unknown User'}
             </h3>
-            <p className="text-xs text-muted-foreground">
-              {otherParticipant?.status || 'offline'}
+            <p className="text-xs text-muted-foreground capitalize">
+              {otherParticipant?.status === "group" ? "Group Chat" : (otherParticipant?.status || 'offline')}
             </p>
           </div>
         </div>

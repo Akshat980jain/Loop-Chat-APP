@@ -129,6 +129,37 @@ object MessagingFeaturesRepository {
         }
     }
     
+    /**
+     * Get all reactions for a list of message IDs in a single query
+     */
+    suspend fun getReactionsForMessages(
+        httpClient: HttpClient,
+        messageIds: List<String>
+    ): Result<List<MessageReaction>> {
+        if (messageIds.isEmpty()) return Result.success(emptyList())
+        return try {
+            val accessToken = SupabaseClient.getAccessToken() 
+                ?: return Result.failure(Exception("Not authenticated"))
+            
+            val idsString = messageIds.joinToString(",")
+            val response = httpClient.get("$supabaseUrl/rest/v1/message_reactions") {
+                parameter("select", "*")
+                parameter("message_id", "in.($idsString)")
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $accessToken")
+            }
+            
+            if (response.status.isSuccess()) {
+                val reactions: List<MessageReaction> = response.body()
+                Result.success(reactions)
+            } else {
+                Result.failure(Exception("Failed to fetch reactions"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+    
     // ============================================
     // MESSAGE EDITS
     // ============================================

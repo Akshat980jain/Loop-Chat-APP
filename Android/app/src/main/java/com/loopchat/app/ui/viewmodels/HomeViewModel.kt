@@ -13,6 +13,9 @@ import com.loopchat.app.data.SupabaseClient
 import com.loopchat.app.data.SupabaseRepository
 import com.loopchat.app.data.models.Profile
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -88,6 +91,23 @@ class HomeViewModel : ViewModel() {
     var selectedConversationForActions by mutableStateOf<String?>(null)
         private set
     
+    /**
+     * Load everything needed for the home screen in parallel.
+     * Fires conversations, contacts, calls, and privacy data simultaneously
+     * so the UI populates as fast as the slowest single request instead of
+     * waiting for each one to complete before starting the next.
+     */
+    fun initialLoad() {
+        viewModelScope.launch {
+            // Fire all top-level loads concurrently
+            val convJob  = launch { loadConversationsInternal() }
+            val contJob  = launch { loadContactsInternal() }
+            val callJob  = launch { loadCallsInternal() }
+            val p2Job    = launch { loadPhase2DataInternal() }
+            convJob.join(); contJob.join(); callJob.join(); p2Job.join()
+        }
+    }
+
     fun loadConversations(isRefresh: Boolean = false) {
         val userId = SupabaseClient.currentUserId
         
@@ -98,40 +118,50 @@ class HomeViewModel : ViewModel() {
         }
         
         viewModelScope.launch {
-            if (!isRefresh) isLoadingConversations = true
-            errorMessage = null
-            
-            try {
-                val result = SupabaseRepository.getConversations(userId)
-                result.onSuccess { convs ->
-                    conversations = convs.sortedByDescending { it.updatedAt }
-                    // Empty conversations list is normal for new accounts - no error needed
-                }.onFailure { e ->
-                    errorMessage = e.message ?: "Unknown error"
-                }
-            } catch (e: Exception) {
-                errorMessage = "Exception: ${e.message}"
-            }
-            
-            if (!isRefresh) isLoadingConversations = false
+            loadConversationsInternal(isRefresh)
         }
+    }
+
+    private suspend fun loadConversationsInternal(isRefresh: Boolean = false) {
+        val userId = SupabaseClient.currentUserId
+        if (userId == null) {
+            errorMessage = "Not logged in - User ID is null"
+            isLoadingConversations = false
+            return
+        }
+        if (!isRefresh) isLoadingConversations = true
+        errorMessage = null
+        
+        try {
+            val result = SupabaseRepository.getConversations(userId)
+            result.onSuccess { convs ->
+                conversations = convs.sortedByDescending { it.updatedAt }
+            }.onFailure { e ->
+                errorMessage = e.message ?: "Unknown error"
+            }
+        } catch (e: Exception) {
+            errorMessage = "Exception: ${e.message}"
+        }
+        
+        if (!isRefresh) isLoadingConversations = false
     }
     
     fun loadContacts(isRefresh: Boolean = false) {
+        viewModelScope.launch { loadContactsInternal(isRefresh) }
+    }
+
+    private suspend fun loadContactsInternal(isRefresh: Boolean = false) {
         val userId = SupabaseClient.currentUserId ?: return
+        if (!isRefresh) isLoadingContacts = true
         
-        viewModelScope.launch {
-            if (!isRefresh) isLoadingContacts = true
-            
-            val result = SupabaseRepository.getContacts(userId)
-            result.onSuccess { contactList ->
-                contacts = contactList
-            }.onFailure { e ->
-                errorMessage = e.message
-            }
-            
-            if (!isRefresh) isLoadingContacts = false
+        val result = SupabaseRepository.getContacts(userId)
+        result.onSuccess { contactList ->
+            contacts = contactList
+        }.onFailure { e ->
+            errorMessage = e.message
         }
+        
+        if (!isRefresh) isLoadingContacts = false
     }
     
     private var callsOffset = 0
@@ -142,22 +172,22 @@ class HomeViewModel : ViewModel() {
         private set
 
     fun loadCalls(isRefresh: Boolean = false) {
-        viewModelScope.launch {
-            if (!isRefresh) isLoadingCalls = true
-            callsOffset = 0
-            hasMoreCalls = true
-            
-            val result = SupabaseRepository.getCallHistory(offset = 0, limit = callsPageSize)
-            result.onSuccess { callList ->
-                calls = callList
-                callsOffset = callList.size
-                hasMoreCalls = callList.size >= callsPageSize
-            }.onFailure { e ->
-                // Don't set error for calls tab
-            }
-            
-            if (!isRefresh) isLoadingCalls = false
-        }
+        viewModelScope.launch { loadCallsInternal(isRefresh) }
+    }
+
+    private suspend fun loadCallsInternal(isRefresh: Boolean = false) {
+        if (!isRefresh) isLoadingCalls = true
+        callsOffset = 0
+        hasMoreCalls = true
+        
+        val result = SupabaseRepository.getCallHistory(offset = 0, limit = callsPageSize)
+        result.onSuccess { callList ->
+            calls = callList
+            callsOffset = callList.size
+            hasMoreCalls = callList.size >= callsPageSize
+        }.onFailure { /* Don't set error for calls tab */ }
+        
+        if (!isRefresh) isLoadingCalls = false
     }
 
     fun loadMoreCalls() {
@@ -293,11 +323,21 @@ class HomeViewModel : ViewModel() {
     // ============================================
     
     fun loadPhase2Data() {
-        viewModelScope.launch {
-            loadArchivedConversations()
-            loadPinnedConversations()
-            loadMutedConversations()
-            loadBlockedUsers()
+        viewModelScope.launch { loadPhase2DataInternal() }
+    }
+    
+    // PERFORMANCE: All 4 privacy/org calls run in parallel inside a coroutineScope
+    private suspend fun loadPhase2DataInternal() {
+        coroutineScope {
+            val archivedDeferred = async { com.loopchat.app.data.PrivacySecurityRepository.getArchivedConversations(SupabaseClient.httpClient) }
+            val pinnedDeferred   = async { com.loopchat.app.data.PrivacySecurityRepository.getPinnedConversations(SupabaseClient.httpClient) }
+            val mutedDeferred    = async { com.loopchat.app.data.PrivacySecurityRepository.getMutedConversations(SupabaseClient.httpClient) }
+            val blockedDeferred  = async { com.loopchat.app.data.PrivacySecurityRepository.getBlockedUsers(SupabaseClient.httpClient) }
+
+            archivedDeferred.await().onSuccess { archivedConversations = it }
+            pinnedDeferred.await().onSuccess   { pinnedConversations   = it }
+            mutedDeferred.await().onSuccess    { mutedConversations    = it }
+            blockedDeferred.await().onSuccess  { blockedUsers          = it }
         }
     }
     

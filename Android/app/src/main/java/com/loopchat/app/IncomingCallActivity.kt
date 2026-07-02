@@ -130,7 +130,7 @@ class IncomingCallActivity : ComponentActivity() {
     private fun acceptCall() {
         Log.d(TAG, "Accept call tapped")
         
-        // Send accept action to CallService
+        // Send accept action to CallService to handle background tasks (ringtone stop, DB update, etc.)
         val serviceIntent = Intent(this, CallService::class.java).apply {
             action = CallService.ACTION_ACCEPT_CALL
             putExtra(CallService.EXTRA_CALL_ID, callId)
@@ -146,7 +146,20 @@ class IncomingCallActivity : ComponentActivity() {
             Log.e(TAG, "Failed to start service for accept: ${e.message}")
         }
         
-        // Close this activity - CallService will launch MainActivity with call screen
+        // Launch MainActivity directly from this foreground activity to guarantee transition to the call screen
+        val mainIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("navigate_to", "call")
+            putExtra(CallService.EXTRA_CALL_ID, callId)
+            putExtra(CallService.EXTRA_CALLER_ID, callerId)
+            putExtra(CallService.EXTRA_CALLER_NAME, callerName)
+            putExtra(CallService.EXTRA_CALL_TYPE, callType)
+            putExtra(CallService.EXTRA_ROOM_URL, roomUrl)
+            putExtra(CallService.EXTRA_CALLEE_TOKEN, calleeToken)
+            putExtra("is_incoming", true)
+        }
+        startActivity(mainIntent)
+        
         finish()
     }
     
@@ -176,6 +189,7 @@ class IncomingCallActivity : ComponentActivity() {
     private fun startCallServiceForRingtone() {
         val intent = Intent(this, CallService::class.java).apply {
             action = CallService.ACTION_INCOMING_CALL
+            putExtra("from_activity", true)
             putExtra(CallService.EXTRA_CALL_ID, callId)
             putExtra(CallService.EXTRA_CALLER_ID, callerId)
             putExtra(CallService.EXTRA_CALLER_NAME, callerName)

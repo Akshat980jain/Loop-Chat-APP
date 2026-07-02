@@ -9,6 +9,7 @@ import android.content.Intent
 import android.annotation.SuppressLint
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.media.Ringtone
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.IBinder
@@ -48,8 +49,8 @@ class CallService : Service() {
     
     companion object {
         private const val TAG = "CallService"
-        const val CHANNEL_ID = "call_service"
-        const val NOTIFICATION_ID = 2001
+        const val CHANNEL_ID = "incoming_calls_v2"
+        const val NOTIFICATION_ID = 1001
         
         // Actions
         const val ACTION_INCOMING_CALL = "com.loopchat.app.INCOMING_CALL"
@@ -78,6 +79,10 @@ class CallService : Service() {
     private val httpClient = HttpClient(Android) {
         install(ContentNegotiation) {
             json(Json { ignoreUnknownKeys = true; isLenient = true })
+        }
+        engine {
+            connectTimeout = 8_000
+            socketTimeout = 8_000
         }
     }
     
@@ -122,21 +127,43 @@ class CallService : Service() {
         val callerName = intent.getStringExtra(EXTRA_CALLER_NAME) ?: "Unknown"
         val callType = intent.getStringExtra(EXTRA_CALL_TYPE) ?: "audio"
         val roomUrl = intent.getStringExtra(EXTRA_ROOM_URL) ?: ""
+        val fromActivity = intent.getBooleanExtra("from_activity", false)
         
         currentCallId = callId
         
-        Log.d(TAG, "Handling incoming call from $callerName")
+        Log.d(TAG, "Handling incoming call from $callerName, fromActivity=$fromActivity")
         
         // Start as foreground with incoming call notification
         val notification = createIncomingCallNotification(callId, callerId, callerName, callType, roomUrl)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // For incoming/ringing call, only use phoneCall type to prevent SecurityException background start crashes.
             startForeground(
                 NOTIFICATION_ID, 
                 notification, 
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
+        }
+        
+        // Try to launch IncomingCallActivity directly in the foreground if not initiated from it
+        if (!fromActivity) {
+            val activityIntent = Intent(this, IncomingCallActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or 
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or 
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(EXTRA_CALL_ID, callId)
+                putExtra(EXTRA_CALLER_ID, callerId)
+                putExtra(EXTRA_CALLER_NAME, callerName)
+                putExtra(EXTRA_CALL_TYPE, callType)
+                putExtra(EXTRA_ROOM_URL, roomUrl)
+            }
+            try {
+                startActivity(activityIntent)
+                Log.d(TAG, "IncomingCallActivity launched directly from CallService")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to launch IncomingCallActivity directly from CallService: ${e.message}")
+            }
         }
         
         // Start ringtone and vibration
@@ -253,10 +280,18 @@ class CallService : Service() {
         )
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // Check permissions before declaring camera/microphone service types to prevent crashes
+            val hasCamera = checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            val hasMic = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            
+            var typeFlags = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+            if (hasCamera) typeFlags = typeFlags or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            if (hasMic) typeFlags = typeFlags or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            
             startForeground(
                 NOTIFICATION_ID, 
                 notification, 
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                typeFlags
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
@@ -286,16 +321,18 @@ class CallService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         
-        // Accept action
-        val acceptIntent = Intent(this, CallService::class.java).apply {
+        // Accept action (targets MainActivity to bypass background activity launch restrictions)
+        val acceptIntent = Intent(this, MainActivity::class.java).apply {
             action = ACTION_ACCEPT_CALL
+            putExtra("navigate_to", "call")
             putExtra(EXTRA_CALL_ID, callId)
             putExtra(EXTRA_CALLER_ID, callerId)
             putExtra(EXTRA_CALLER_NAME, callerName)
             putExtra(EXTRA_CALL_TYPE, callType)
             putExtra(EXTRA_ROOM_URL, roomUrl)
+            putExtra("is_incoming", true)
         }
-        val acceptPendingIntent = PendingIntent.getForegroundService(
+        val acceptPendingIntent = PendingIntent.getActivity(
             this, 1, acceptIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -401,6 +438,7 @@ class CallService : Service() {
             description = "Notifications for active calls"
             lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             setBypassDnd(true)
+            setSound(null, null) // Silent channel to prevent double ringing
         }
         
         val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -411,6 +449,12 @@ class CallService : Service() {
      * Start ringtone and vibration
      */
     private fun startRingtone() {
+        if (mediaPlayer?.isPlaying == true) {
+            Log.d(TAG, "Ringtone is already playing, skipping duplicate start")
+            return
+        }
+        stopRingtone()
+        
         try {
             // Vibration
             vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -426,24 +470,45 @@ class CallService : Service() {
                 it.vibrate(VibrationEffect.createWaveform(pattern, 0))
             }
             
-            // Ringtone
-            val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-            mediaPlayer = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                setDataSource(this@CallService, ringtoneUri)
-                isLooping = true
-                prepare()
-                start()
+            // Try to play ringtone with fallbacks (Type Ringtone -> Type Notification -> Type Alarm)
+            // This guarantees playing a sound even on tablets or devices with no default phone ringtone set.
+            val urisToTry = listOf(
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            )
+            
+            var success = false
+            for (uri in urisToTry) {
+                if (uri == null) continue
+                try {
+                    mediaPlayer = MediaPlayer().apply {
+                        setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .build()
+                        )
+                        setDataSource(applicationContext, uri)
+                        isLooping = true
+                        prepare()
+                        start()
+                    }
+                    Log.d(TAG, "Ringtone started successfully with MediaPlayer URI: $uri")
+                    success = true
+                    break
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to play ringtone with URI $uri: ${e.message}. Trying fallback...")
+                    mediaPlayer?.release()
+                    mediaPlayer = null
+                }
             }
             
-            Log.d(TAG, "Ringtone started")
+            if (!success) {
+                Log.e(TAG, "Could not play any system ringtone/notification/alarm sound via MediaPlayer")
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Error starting ringtone: ${e.message}")
+            Log.e(TAG, "Error in startRingtone: ${e.message}")
         }
     }
     
@@ -500,6 +565,7 @@ class CallService : Service() {
      * Accept call in Supabase database
      */
     private suspend fun acceptCallInDatabase(callId: String) {
+        SupabaseClient.initialize(applicationContext, skipRevocationCheck = true)
         val accessToken = SupabaseClient.getAccessToken() ?: return
         
         try {
@@ -529,6 +595,7 @@ class CallService : Service() {
      * Reject call in Supabase database
      */
     private suspend fun rejectCallInDatabase(callId: String) {
+        SupabaseClient.initialize(applicationContext, skipRevocationCheck = true)
         val accessToken = SupabaseClient.getAccessToken() ?: return
         
         try {
@@ -558,6 +625,7 @@ class CallService : Service() {
      * End call in Supabase database
      */
     private suspend fun endCallInDatabase(callId: String) {
+        SupabaseClient.initialize(applicationContext, skipRevocationCheck = true)
         val accessToken = SupabaseClient.getAccessToken() ?: return
         
         try {

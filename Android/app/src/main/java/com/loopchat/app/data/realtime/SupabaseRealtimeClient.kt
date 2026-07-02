@@ -6,9 +6,10 @@ import com.loopchat.app.BuildConfig
 import com.loopchat.app.data.SupabaseClient
 import com.loopchat.app.data.local.LoopChatDatabase
 import com.loopchat.app.data.models.Message
-import com.loopchat.app.data.local.entities.toEntity
+import com.loopchat.app.data.local.entities.*
 import io.ktor.client.*
-import io.ktor.client.engine.android.*
+import io.ktor.client.request.header
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.websocket.*
 import io.ktor.http.*
 import io.ktor.websocket.*
@@ -29,7 +30,7 @@ object SupabaseRealtimeClient {
         isLenient = true
     }
 
-    private val client = HttpClient(Android) {
+    private val client = HttpClient(OkHttp) {
         install(WebSockets) {
             pingInterval = 30_000 // 30 seconds HTTP ping
         }
@@ -45,74 +46,176 @@ object SupabaseRealtimeClient {
     private var activeConversationId: String? = null
     private var dbContext: Context? = null
 
+    fun getActiveConversationId(): String? = activeConversationId
+
     fun initialize(context: Context) {
         dbContext = context.applicationContext
     }
 
-    suspend fun connectAndSubscribe(conversationId: String) {
-        if (activeConversationId == conversationId && _isConnected.value) return
+    suspend fun connectGlobal() {
+        if (_isConnected.value) return
         disconnect()
 
-        activeConversationId = conversationId
-        val accessToken = SupabaseClient.getAccessToken() ?: return
-
         scope.launch {
-            try {
-                // Supabase Realtime requires api key and vsn
-                val wsUrl = "$supabaseUrl/realtime/v1/websocket?apikey=$anonKey&vsn=1.0.0"
-                
-                client.webSocket(wsUrl) {
-                    session = this
-                    _isConnected.value = true
-                    Log.d(TAG, "WebSocket Connected")
+            while (isActive) {
+                val accessToken = SupabaseClient.getAccessToken()
+                val currentUserId = SupabaseClient.currentUserId
+                if (accessToken == null || currentUserId == null) {
+                    Log.w(TAG, "Cannot connect: user not authenticated. Retrying in 5s...")
+                    delay(5000)
+                    continue
+                }
 
-                    // 1. Send Join Payload
-                    val currentUserId = SupabaseClient.currentUserId ?: ""
-                    val joinPayload = buildJoinPayload(conversationId, accessToken, currentUserId)
-                    send(Frame.Text(joinPayload))
-
-                    // Small delay to ensure joined state before tracking presence
-                    delay(200)
-
-                    val trackPayload = """
-                        {
-                          "topic": "realtime:public:messages:conversation_id=eq.$conversationId",
-                          "event": "presence",
-                          "payload": {
-                            "type": "track",
-                            "payload": {}
-                          },
-                          "ref": "track_init"
+                try {
+                    val wsUrl = "$supabaseUrl/realtime/v1/websocket?apikey=$anonKey&token=$accessToken&vsn=1.0.0"
+                    Log.d(TAG, "Connecting to global WebSocket: $wsUrl")
+                    
+                    client.webSocket(
+                        urlString = wsUrl,
+                        request = {
+                            header("Authorization", "Bearer $accessToken")
+                            header("apikey", anonKey)
                         }
-                    """.trimIndent()
-                    send(Frame.Text(trackPayload))
+                    ) {
+                        session = this
+                        _isConnected.value = true
+                        Log.d(TAG, "Global WebSocket Connected")
 
-                    // 2. Start Heartbeat
-                    startHeartbeat()
+                        // 1. Send Join Payload for the global messages channel
+                        val globalJoinPayload = """
+                            {
+                              "topic": "realtime:public:messages",
+                              "event": "phx_join",
+                              "payload": {
+                                "config": {
+                                  "broadcast": { "self": false, "ack": false },
+                                  "presence": { "key": "$currentUserId" },
+                                  "postgres_changes": [
+                                    {
+                                      "event": "INSERT",
+                                      "schema": "public",
+                                      "table": "messages"
+                                    }
+                                  ]
+                                },
+                                "access_token": "$accessToken"
+                              },
+                              "ref": "join_global"
+                            }
+                        """.trimIndent()
+                        send(Frame.Text(globalJoinPayload))
 
-                    // 3. Listen to incoming messages
-                    try {
+                        // Re-join the active conversation channel if the socket reconnected
+                        activeConversationId?.let { convId ->
+                            Log.d(TAG, "Re-joining active conversation channel on connect: $convId")
+                            val freshToken = SupabaseClient.getAccessToken()
+                            if (freshToken != null) {
+                                val joinPayload = buildJoinPayload(convId, freshToken, currentUserId)
+                                send(Frame.Text(joinPayload))
+                            }
+                        }
+
+                        // 2. Start Heartbeat
+                        startHeartbeat()
+
+                        // 3. Listen to incoming messages
                         for (frame in incoming) {
                             if (frame is Frame.Text) {
                                 val text = frame.readText()
                                 handleIncomingMessage(text)
                             }
                         }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "WebSocket Read Error", e)
-                    } finally {
-                        _isConnected.value = false
-                        session = null
-                        heartbeatJob?.cancel()
-                        Log.d(TAG, "WebSocket Disconnected")
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "WebSocket connection error", e)
+                } finally {
+                    _isConnected.value = false
+                    session = null
+                    heartbeatJob?.cancel()
+                    Log.d(TAG, "Global WebSocket Disconnected")
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "WebSocket Connection Failed", e)
-                _isConnected.value = false
-                delay(5000) // Exponential backoff in production
-                connectAndSubscribe(conversationId)
+                
+                // Wait 5 seconds before attempting to reconnect
+                delay(5000)
             }
+        }
+    }
+
+    /**
+     * Join a specific conversation's channel to listen to typing indicators and track presence.
+     * Does NOT listen to Postgres insert events since the global channel handles all database inserts.
+     */
+    suspend fun joinConversation(conversationId: String) {
+        activeConversationId = conversationId
+        val accessToken = SupabaseClient.getAccessToken() ?: return
+        val currentUserId = SupabaseClient.currentUserId ?: ""
+
+        if (!_isConnected.value) {
+            Log.w(TAG, "WebSocket is not connected. Cannot join conversation channel yet.")
+            return
+        }
+
+        try {
+            val joinPayload = """
+                {
+                  "topic": "realtime:public:messages:conversation_id=eq.$conversationId",
+                  "event": "phx_join",
+                  "payload": {
+                    "config": {
+                      "broadcast": { "self": false, "ack": false },
+                      "presence": { "key": "$currentUserId" },
+                      "postgres_changes": []
+                    },
+                    "access_token": "$accessToken"
+                  },
+                  "ref": "join_$conversationId"
+                }
+            """.trimIndent()
+            session?.send(Frame.Text(joinPayload))
+
+            // Small delay to ensure joined state before tracking presence
+            delay(200)
+
+            val trackPayload = """
+                {
+                  "topic": "realtime:public:messages:conversation_id=eq.$conversationId",
+                  "event": "presence",
+                  "payload": {
+                    "type": "track",
+                    "payload": {}
+                  },
+                  "ref": "track_$conversationId"
+                }
+            """.trimIndent()
+            session?.send(Frame.Text(trackPayload))
+            Log.d(TAG, "Joined conversation channel: $conversationId")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to join conversation channel: $conversationId", e)
+        }
+    }
+
+    /**
+     * Leave a specific conversation's channel.
+     */
+    suspend fun leaveConversation(conversationId: String) {
+        if (activeConversationId == conversationId) {
+            activeConversationId = null
+        }
+        try {
+            val leavePayload = """
+                {
+                  "topic": "realtime:public:messages:conversation_id=eq.$conversationId",
+                  "event": "phx_leave",
+                  "payload": {},
+                  "ref": "leave_$conversationId"
+                }
+            """.trimIndent()
+            session?.send(Frame.Text(leavePayload))
+            Log.d(TAG, "Left conversation channel: $conversationId")
+            _typingUsers.value = emptySet()
+            _onlineUsers.value = emptySet()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to leave conversation channel: $conversationId", e)
         }
     }
 
@@ -207,6 +310,7 @@ object SupabaseRealtimeClient {
     }
 
     private suspend fun handleIncomingMessage(rawJson: String) {
+        Log.d(TAG, "Incoming RT Message: $rawJson")
         try {
             val element = json.parseToJsonElement(rawJson).jsonObject
             val event = element["event"]?.jsonPrimitive?.content ?: return
@@ -236,18 +340,42 @@ object SupabaseRealtimeClient {
                 }
             } else if (event == "postgres_changes") {
                 val payload = element["payload"]?.jsonObject ?: return
-                val type = payload["type"]?.jsonPrimitive?.content ?: return
+                val type = (payload["type"] ?: payload["event"])?.jsonPrimitive?.content ?: return
                 
                 if (type == "INSERT") {
-                    val record = payload["record"] ?: return
+                    val record = payload["data"]?.jsonObject?.get("record") 
+                        ?: payload["record"] 
+                        ?: return
+                    
                     val message = json.decodeFromJsonElement<Message>(record)
                     Log.d(TAG, "New RT Message: \${message.id}")
                     
                     // Inject directly into Room DB Single Source of Truth
                     dbContext?.let { ctx ->
                         val db = LoopChatDatabase.getDatabase(ctx)
-                        db.messageDao().insertMessage(message.toEntity())
-                        db.conversationDao().incrementUnreadCount(message.conversationId)
+                        
+                        // We run this in a coroutine to avoid blocking the WebSocket listener thread
+                        scope.launch {
+                            try {
+                                // Cache message
+                                db.messageDao().insertMessage(message.toEntity())
+                                db.conversationDao().incrementUnreadCount(message.conversationId)
+                                
+                                // Fetch and cache sender profile if missing
+                                val senderExists = db.userDao().getUserById(message.senderId) != null
+                                if (!senderExists) {
+                                    val accessToken = SupabaseClient.getAccessToken()
+                                    if (accessToken != null) {
+                                        val profile = com.loopchat.app.data.SupabaseRepository.getCachedProfile(message.senderId, accessToken)
+                                        profile?.let { p ->
+                                            db.userDao().insertUser(p.toEntity())
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to inject real-time message or sender profile", e)
+                            }
+                        }
                     }
                 }
             }

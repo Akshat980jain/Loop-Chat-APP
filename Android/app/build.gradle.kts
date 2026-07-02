@@ -177,6 +177,7 @@ dependencies {
     
     // Ktor WebSockets for Supabase Realtime
     implementation("io.ktor:ktor-client-websockets:2.3.7")
+    implementation("io.ktor:ktor-client-okhttp:2.3.7")
 
     // Media3 ExoPlayer for Voice Messages
     implementation("androidx.media3:media3-exoplayer:1.2.1")

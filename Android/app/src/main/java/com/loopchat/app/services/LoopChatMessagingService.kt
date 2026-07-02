@@ -13,8 +13,12 @@ import androidx.core.app.NotificationCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.loopchat.app.IncomingCallActivity
+import com.loopchat.app.MainActivity
 import com.loopchat.app.R
 import com.loopchat.app.data.SupabaseClient
+import com.loopchat.app.data.IncomingCallManager
+import com.loopchat.app.data.models.Call
+import com.loopchat.app.data.models.Profile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -29,7 +33,7 @@ class LoopChatMessagingService : FirebaseMessagingService() {
     
     companion object {
         private const val TAG = "LoopChatFCM"
-        const val CHANNEL_ID_CALLS = "incoming_calls"
+        const val CHANNEL_ID_CALLS = "incoming_calls_v2"
         const val CHANNEL_ID_MESSAGES = "messages"
         const val NOTIFICATION_ID_INCOMING_CALL = 1001
     }
@@ -90,6 +94,24 @@ class LoopChatMessagingService : FirebaseMessagingService() {
         val calleeToken = data["callee_token"] ?: ""
         
         Log.d(TAG, "Incoming call: id=$callId, from=$callerName, type=$callTypeValue")
+
+        // Inject the call details directly into the app state
+        val call = Call(
+            id = callId,
+            callerId = callerId,
+            calleeId = SupabaseClient.currentUserId ?: "",
+            status = "ringing",
+            callType = callTypeValue,
+            roomUrl = roomUrl,
+            calleeToken = calleeToken,
+            createdAt = java.time.Instant.now().toString()
+        )
+        val callerProfile = Profile(
+            id = callerId,
+            userId = callerId,
+            fullName = callerName
+        )
+        IncomingCallManager.setIncomingCall(call, callerProfile)
         
         // Instead of starting the foreground service directly (which crashes on Android 12+ if in background),
         // we build the incoming call notification right here and post it to NotificationManager with a Full-Screen Intent.
@@ -112,17 +134,19 @@ class LoopChatMessagingService : FirebaseMessagingService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         
-        // Accept and Reject intents (routes directly to CallService)
-        val acceptIntent = Intent(this, CallService::class.java).apply {
+        // Accept action (targets MainActivity to bypass background activity launch restrictions)
+        val acceptIntent = Intent(this, MainActivity::class.java).apply {
             action = CallService.ACTION_ACCEPT_CALL
+            putExtra("navigate_to", "call")
             putExtra(CallService.EXTRA_CALL_ID, callId)
             putExtra(CallService.EXTRA_CALLER_ID, callerId)
             putExtra(CallService.EXTRA_CALLER_NAME, callerName)
             putExtra(CallService.EXTRA_CALL_TYPE, callTypeValue)
             putExtra(CallService.EXTRA_ROOM_URL, roomUrl)
             putExtra(CallService.EXTRA_CALLEE_TOKEN, calleeToken)
+            putExtra("is_incoming", true)
         }
-        val acceptPendingIntent = PendingIntent.getForegroundService(
+        val acceptPendingIntent = PendingIntent.getActivity(
             this, 1, acceptIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -181,9 +205,30 @@ class LoopChatMessagingService : FirebaseMessagingService() {
             // Not fatal - the notification + full-screen intent will still work
         }
         
+        // Try to launch IncomingCallActivity directly in the foreground (for unlocked/active device use cases)
+        try {
+            startActivity(fullScreenIntent)
+            Log.d(TAG, "IncomingCallActivity launched directly from FCM")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to launch IncomingCallActivity directly: ${e.message}")
+        }
+        
         notificationManager.notify(NOTIFICATION_ID_INCOMING_CALL, builder.build())
     }
     
+    private fun isAppInForeground(): Boolean {
+        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager ?: return false
+        val appProcesses = activityManager.runningAppProcesses ?: return false
+        val packageName = packageName
+        for (appProcess in appProcesses) {
+            if (appProcess.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND && 
+                appProcess.processName == packageName) {
+                return true
+            }
+        }
+        return false
+    }
+
     /**
      * Handle a new message push notification.
      */
@@ -195,8 +240,15 @@ class LoopChatMessagingService : FirebaseMessagingService() {
         
         Log.d(TAG, "New message from $senderName: $messagePreview")
         
-        // Don't show notification if the app is in the foreground and the user is viewing this conversation
-        // (The in-app realtime listener already handles this case)
+        // Smart foreground filtering: Don't show notification if the user is actively viewing this conversation in the foreground.
+        // We only suppress if the app is in the foreground, since activeConversationId is not cleared when the app is placed in the background.
+        if (isAppInForeground()) {
+            val activeConvId = com.loopchat.app.data.realtime.SupabaseRealtimeClient.getActiveConversationId()
+            if (conversationId == activeConvId) {
+                Log.d(TAG, "User is actively viewing conversation $conversationId in foreground. Suppressing notification.")
+                return
+            }
+        }
         
         // Build the notification
         val intent = Intent(this, com.loopchat.app.MainActivity::class.java).apply {
@@ -230,6 +282,7 @@ class LoopChatMessagingService : FirebaseMessagingService() {
      * Upload FCM token to Supabase for this user.
      */
     private suspend fun uploadTokenToServer(token: String) {
+        SupabaseClient.initialize(applicationContext, skipRevocationCheck = true)
         val accessToken = SupabaseClient.getAccessToken()
         val userId = SupabaseClient.currentUserId
         
@@ -266,7 +319,7 @@ class LoopChatMessagingService : FirebaseMessagingService() {
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = "Notifications for incoming voice and video calls"
-                setSound(ringtoneUri, audioAttributes)
+                setSound(null, null) // Silent channel to prevent double ringing (MediaPlayer handles the sound)
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 1000, 500, 1000, 500)
                 lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
@@ -277,7 +330,7 @@ class LoopChatMessagingService : FirebaseMessagingService() {
             val messageChannel = NotificationChannel(
                 CHANNEL_ID_MESSAGES,
                 "Chat Messages",
-                NotificationManager.IMPORTANCE_DEFAULT
+                NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = "Notifications for new chat messages"
             }

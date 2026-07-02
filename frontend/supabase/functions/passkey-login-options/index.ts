@@ -62,7 +62,7 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           challenge: challenge,
-          rpId: Deno.env.get('PASSKEY_RP_ID') || "loop-chat.vercel.app",
+          rpId: Deno.env.get('PASSKEY_RP_ID') || "loop-chat-s4xf.onrender.com",
           allowCredentials: [],
           timeout: 120000,
           userVerification: "required",
@@ -114,7 +114,7 @@ serve(async (req) => {
 
     const authenticationOptions = {
       challenge: challenge,
-      rpId: Deno.env.get('PASSKEY_RP_ID') || "loop-chat.vercel.app",
+      rpId: Deno.env.get('PASSKEY_RP_ID') || "loop-chat-s4xf.onrender.com",
       allowCredentials: allowCredentials,
       timeout: 120000,
       userVerification: "required",

@@ -19,7 +19,7 @@ import com.loopchat.app.data.local.entities.UserEntity
         com.loopchat.app.data.local.entities.GroupEntity::class,
         com.loopchat.app.data.local.entities.GroupMemberEntity::class
     ],
-    version = 5, // Incremented version to fix Room data integrity exceptions
+    version = 6, // Bumped from 5→6 to force schema re-check and fix integrity crash on devices with old DB
     exportSchema = false
 )
 abstract class LoopChatDatabase : RoomDatabase() {
@@ -40,7 +40,10 @@ abstract class LoopChatDatabase : RoomDatabase() {
                     LoopChatDatabase::class.java,
                     "loopchat_database"
                 )
+                    // Wipe and rebuild DB for any version that doesn't have an explicit migration.
+                    // Covers devices still running schema version 1-5 (the hash-mismatch crash).
                     .fallbackToDestructiveMigration()
+                    .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5)
                     .build()
                 INSTANCE = instance
                 instance

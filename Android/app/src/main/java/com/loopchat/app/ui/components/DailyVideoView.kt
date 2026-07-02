@@ -15,7 +15,8 @@ import co.daily.view.VideoView
 fun DailyVideoView(
     videoTrack: co.daily.model.MediaStreamTrack?,
     modifier: Modifier = Modifier,
-    scaleMode: VideoView.VideoScaleMode = VideoView.VideoScaleMode.FIT
+    scaleMode: VideoView.VideoScaleMode = VideoView.VideoScaleMode.FIT,
+    isOverlay: Boolean = false
 ) {
     if (videoTrack == null) {
         // Render empty box when no video track is available (e.g. camera off)
@@ -29,12 +30,38 @@ fun DailyVideoView(
             VideoView(context).apply {
                 this.videoScaleMode = scaleMode
                 this.track = videoTrack
+                if (isOverlay) {
+                    val viewAsView = this as android.view.View
+                    if (viewAsView is android.view.SurfaceView) {
+                        viewAsView.setZOrderMediaOverlay(true)
+                    } else if (viewAsView is android.view.ViewGroup) {
+                        for (i in 0 until viewAsView.childCount) {
+                            val child = viewAsView.getChildAt(i)
+                            if (child is android.view.SurfaceView) {
+                                child.setZOrderMediaOverlay(true)
+                            }
+                        }
+                    }
+                }
             }
         },
         update = { view ->
             view.videoScaleMode = scaleMode
             if (view.track != videoTrack) {
                 view.track = videoTrack
+            }
+            if (isOverlay) {
+                val viewAsView = view as android.view.View
+                if (viewAsView is android.view.SurfaceView) {
+                    viewAsView.setZOrderMediaOverlay(true)
+                } else if (viewAsView is android.view.ViewGroup) {
+                    for (i in 0 until viewAsView.childCount) {
+                        val child = viewAsView.getChildAt(i)
+                        if (child is android.view.SurfaceView) {
+                            child.setZOrderMediaOverlay(true)
+                        }
+                    }
+                }
             }
         }
     )

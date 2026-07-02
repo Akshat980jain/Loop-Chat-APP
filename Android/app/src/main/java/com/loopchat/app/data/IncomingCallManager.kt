@@ -3,6 +3,7 @@ package com.loopchat.app.data
 import android.content.Context
 import android.media.AudioManager
 import android.media.MediaPlayer
+import android.media.Ringtone
 import android.media.RingtoneManager
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -44,6 +45,10 @@ object IncomingCallManager {
         install(ContentNegotiation) {
             json(json)
         }
+        engine {
+            connectTimeout = 8_000  // Match SupabaseClient: fail fast on slow networks
+            socketTimeout = 8_000
+        }
     }
     
     // State for incoming call
@@ -64,26 +69,10 @@ object IncomingCallManager {
     )
     
     /**
-     * Start listening for incoming calls
+     * Start listening for incoming calls (Now powered by FCM push notifications)
      */
     fun startListening(context: Context) {
-        if (pollingJob?.isActive == true) {
-            Log.d(TAG, "Already listening for incoming calls")
-            return
-        }
-        
-        Log.d(TAG, "Starting incoming call listener")
-        
-        pollingJob = CoroutineScope(Dispatchers.IO).launch {
-            while (isActive) {
-                try {
-                    checkForIncomingCalls(context)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error checking for incoming calls: ${e.message}")
-                }
-                delay(POLL_INTERVAL_MS)
-            }
-        }
+        Log.d(TAG, "Incoming call listener active (FCM push signaling)")
     }
     
     /**
@@ -91,9 +80,14 @@ object IncomingCallManager {
      */
     fun stopListening() {
         Log.d(TAG, "Stopping incoming call listener")
-        pollingJob?.cancel()
-        pollingJob = null
         stopRingtone()
+    }
+
+    /**
+     * Inject call details directly from an FCM push message.
+     */
+    fun setIncomingCall(call: Call, callerProfile: Profile?) {
+        _incomingCall.value = IncomingCallData(call, callerProfile)
     }
     
     /**
@@ -275,6 +269,12 @@ object IncomingCallManager {
      * Start playing ringtone and vibrating
      */
     private fun startRingtone(context: Context) {
+        if (mediaPlayer?.isPlaying == true) {
+            Log.d(TAG, "Ringtone is already playing, skipping duplicate start")
+            return
+        }
+        stopRingtone()
+        
         try {
             // Start vibration
             vibrator = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -295,24 +295,44 @@ object IncomingCallManager {
                 }
             }
             
-            // Start ringtone
-            val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-            mediaPlayer = MediaPlayer().apply {
-                setAudioAttributes(
-                    android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                setDataSource(context, ringtoneUri)
-                isLooping = true
-                prepare()
-                start()
+            // Try to play ringtone with fallbacks (Type Ringtone -> Type Notification -> Type Alarm)
+            val urisToTry = listOf(
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            )
+            
+            var success = false
+            for (uri in urisToTry) {
+                if (uri == null) continue
+                try {
+                    mediaPlayer = MediaPlayer().apply {
+                        setAudioAttributes(
+                            android.media.AudioAttributes.Builder()
+                                .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .build()
+                        )
+                        setDataSource(context, uri)
+                        isLooping = true
+                        prepare()
+                        start()
+                    }
+                    Log.d(TAG, "Ringtone started successfully with MediaPlayer URI: $uri")
+                    success = true
+                    break
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to play ringtone with URI $uri: ${e.message}. Trying fallback...")
+                    mediaPlayer?.release()
+                    mediaPlayer = null
+                }
             }
             
-            Log.d(TAG, "Ringtone started")
+            if (!success) {
+                Log.e(TAG, "Could not play any system ringtone/notification/alarm sound via MediaPlayer")
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Error starting ringtone: ${e.message}")
+            Log.e(TAG, "Error in startRingtone: ${e.message}")
         }
     }
     

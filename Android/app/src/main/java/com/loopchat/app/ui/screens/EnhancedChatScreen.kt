@@ -106,7 +106,7 @@ fun EnhancedChatScreen(
         chatViewModel.loadMessages(conversationId, context)
         voiceViewModel.state
         // Setup real-time listeners
-        com.loopchat.app.data.realtime.SupabaseRealtimeClient.connectAndSubscribe(
+        com.loopchat.app.data.realtime.SupabaseRealtimeClient.joinConversation(
             conversationId = conversationId
         )
     }

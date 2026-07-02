@@ -117,7 +117,7 @@ class EnhancedChatViewModel : ViewModel() {
             
             // Initialize and connect Realtime WebSockets
             com.loopchat.app.data.realtime.SupabaseRealtimeClient.initialize(context)
-            com.loopchat.app.data.realtime.SupabaseRealtimeClient.connectAndSubscribe(conversationId)
+            com.loopchat.app.data.realtime.SupabaseRealtimeClient.joinConversation(conversationId)
             
             launch {
                 com.loopchat.app.data.realtime.SupabaseRealtimeClient.typingUsers.collect { users ->
@@ -176,11 +176,16 @@ class EnhancedChatViewModel : ViewModel() {
                     }
                     
                     messages = messageList
-                    loadReactionsForMessages(messageList.map { it.id })
                     
-                    val pollMessageIds = messageList.filter { it.messageType == "poll" }.map { it.id }
-                    if (pollMessageIds.isNotEmpty()) {
-                        loadPollsForMessages(pollMessageIds)
+                    // Asynchronously load reactions and polls so they do not block the DB stream or the UI rendering
+                    val messageIds = messageList.map { it.id }
+                    if (messageIds.isNotEmpty()) {
+                        loadReactionsForMessages(messageIds)
+                        
+                        val pollMessageIds = messageList.filter { it.messageType == "poll" }.map { it.id }
+                        if (pollMessageIds.isNotEmpty()) {
+                            loadPollsForMessages(pollMessageIds)
+                        }
                     }
                     
                     if (otherParticipant == null) {
@@ -191,6 +196,7 @@ class EnhancedChatViewModel : ViewModel() {
                         }
                     }
                     
+                    // Set loading state to false immediately after updating local messages list
                     isLoading = false
                 }
             }
@@ -244,20 +250,25 @@ class EnhancedChatViewModel : ViewModel() {
         }
     }
     
-    private suspend fun loadReactionsForMessages(messageIds: List<String>) {
-        val reactionsMap = mutableMapOf<String, Map<String, List<String>>>()
-        
-        messageIds.forEach { messageId ->
-            val result = MessagingFeaturesRepository.getMessageReactions(httpClient, messageId)
+    private fun loadReactionsForMessages(messageIds: List<String>) {
+        if (messageIds.isEmpty()) return
+        viewModelScope.launch {
+            val result = MessagingFeaturesRepository.getReactionsForMessages(httpClient, messageIds)
             result.onSuccess { reactions ->
-                // Group by emoji
-                val grouped = reactions.groupBy { it.reaction }
-                    .mapValues { (_, reactionList) -> reactionList.map { it.user_id } }
-                reactionsMap[messageId] = grouped
+                // Group by messageId, then by emoji
+                val reactionsMap = messageReactions.toMutableMap()
+                
+                // Clear old reactions for these messages
+                messageIds.forEach { reactionsMap.remove(it) }
+                
+                reactions.groupBy { it.message_id }.forEach { (messageId, reactionList) ->
+                    val grouped = reactionList.groupBy { it.reaction }
+                        .mapValues { (_, list) -> list.map { it.user_id } }
+                    reactionsMap[messageId] = grouped
+                }
+                messageReactions = reactionsMap
             }
         }
-        
-        messageReactions = reactionsMap
     }
     
     fun onMediaSelected(uri: Uri, type: String) {
@@ -339,21 +350,24 @@ class EnhancedChatViewModel : ViewModel() {
                 }
             }
             
-            // Optimistic UI: show the message immediately in the chat
+            // Optimistic UI: insert the pending message directly into the local Room database
             val tempId = "temp_${System.currentTimeMillis()}"
-            val optimisticMessage = MessageWithSender(
+            val optimisticEntity = com.loopchat.app.data.local.entities.MessageEntity(
                 id = tempId,
-                content = displayContent,
                 conversationId = conversationId,
                 senderId = currentUserId,
-                createdAt = java.time.Instant.now().toString(),
-                sender = otherParticipant?.let { null } ?: null, // sender is "me", no profile needed for own messages
-                mediaUrl = mediaUrl,
+                content = displayContent,
                 messageType = messageType,
+                mediaUrl = mediaUrl,
+                createdAt = java.time.Instant.now().toString(),
                 isRead = false,
                 status = "pending"
             )
-            messages = messages + optimisticMessage
+            
+            context?.let { ctx ->
+                val db = com.loopchat.app.data.local.LoopChatDatabase.getDatabase(ctx)
+                db.messageDao().insertMessage(optimisticEntity)
+            }
             
             // Now encrypt for sending (keep displayContent visible locally)
             var msgContent = displayContent
@@ -389,11 +403,11 @@ class EnhancedChatViewModel : ViewModel() {
                 expiresAt = expiresAtOffset
             )
             result.onSuccess { message ->
-                // Remove the optimistic message (Room observer will add the real one)
-                messages = messages.filterNot { it.id == tempId }
-                
                 context?.let { ctx ->
                     val db = com.loopchat.app.data.local.LoopChatDatabase.getDatabase(ctx)
+                    // Delete the optimistic pending message
+                    db.messageDao().deleteMessageById(tempId)
+                    // Insert the real message
                     db.messageDao().insertMessage(message.toEntity())
                 }
                 
@@ -430,8 +444,11 @@ class EnhancedChatViewModel : ViewModel() {
                     }
                 }
             }.onFailure { e ->
-                // Remove optimistic message on failure
-                messages = messages.filterNot { it.id == tempId }
+                context?.let { ctx ->
+                    val db = com.loopchat.app.data.local.LoopChatDatabase.getDatabase(ctx)
+                    // Update status to failed
+                    db.messageDao().updateMessageStatus(tempId, "failed")
+                }
                 errorMessage = e.message
             }
             
@@ -870,7 +887,12 @@ class EnhancedChatViewModel : ViewModel() {
     
     override fun onCleared() {
         super.onCleared()
-        com.loopchat.app.data.realtime.SupabaseRealtimeClient.disconnect()
+        val conversationId = currentConversationId
+        if (conversationId != null) {
+            viewModelScope.launch {
+                com.loopchat.app.data.realtime.SupabaseRealtimeClient.leaveConversation(conversationId)
+            }
+        }
         httpClient.close()
     }
 

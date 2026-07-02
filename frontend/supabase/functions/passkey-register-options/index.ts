@@ -92,7 +92,7 @@ serve(async (req) => {
       challenge: challenge,
       rp: {
         name: "Loop Chat",
-        id: Deno.env.get('PASSKEY_RP_ID') || "loop-chat.vercel.app",
+        id: Deno.env.get('PASSKEY_RP_ID') || "loop-chat-s4xf.onrender.com",
       },
       user: {
         id: btoa(user.id).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),

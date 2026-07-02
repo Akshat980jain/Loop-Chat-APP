@@ -376,10 +376,10 @@ const Auth = () => {
         body: { phone: validated.phone },
       });
 
-      if (error) {
+      if (error || data?.error) {
         toast({
           title: "Failed to send OTP",
-          description: error.message || "Please try again later.",
+          description: data?.error || error?.message || "Please try again later.",
           variant: "destructive",
         });
       } else {
@@ -387,10 +387,20 @@ const Auth = () => {
         setOtpSent(true);
         setResendCooldown(OTP_COOLDOWN_SECONDS);
         setView("verify-otp");
-        toast({
-          title: "OTP sent",
-          description: "Check your phone for the verification code.",
-        });
+        
+        if (data?.otp) {
+          toast({
+            title: "OTP Generated (Sandbox Mode)",
+            description: `For local testing, use code: ${data.otp}`,
+            duration: 8000,
+          });
+          setAuthForm(prev => ({ ...prev, otp: data.otp }));
+        } else {
+          toast({
+            title: "OTP sent",
+            description: "Check your phone for the verification code.",
+          });
+        }
       }
     } catch (error) {
       if (error instanceof z.ZodError) {

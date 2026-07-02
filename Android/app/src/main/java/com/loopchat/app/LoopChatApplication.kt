@@ -17,8 +17,8 @@ class LoopChatApplication : Application() {
         private const val TAG = "LoopChatApplication"
         
         // Notification channel IDs
-        const val CHANNEL_INCOMING_CALLS = "incoming_calls"
-        const val CHANNEL_CALL_SERVICE = "call_service"
+        const val CHANNEL_INCOMING_CALLS = "incoming_calls_v2"
+        const val CHANNEL_CALL_SERVICE = "call_service_v2"
         const val CHANNEL_MESSAGES = "messages"
     }
     
@@ -54,7 +54,7 @@ class LoopChatApplication : Application() {
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = "Notifications for incoming voice and video calls"
-                setSound(ringtoneUri, audioAttributes)
+                setSound(null, null) // Silent channel to prevent double ringing (MediaPlayer handles the sound)
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 1000, 500, 1000, 500)
                 lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC

@@ -123,9 +123,28 @@ fun LoopChatNavigation(
         
         if (isAuthenticated) {
             IncomingCallManager.startListening(context)
+            com.loopchat.app.data.realtime.SupabaseRealtimeClient.initialize(context)
+            scope.launch {
+                com.loopchat.app.data.realtime.SupabaseRealtimeClient.connectGlobal()
+            }
             // Initial lock check from preferences
             if (prefs.getBoolean("biometric_lock_enabled", false)) {
                 isAppLocked = true
+            }
+            
+            // Auto-upload FCM token on session restoration (ensures token is always registered on server)
+            com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    val token = task.result
+                    scope.launch {
+                        try {
+                            SupabaseClient.updateFcmToken(token)
+                            Log.d("Navigation", "FCM token uploaded successfully on session restoration")
+                        } catch (e: Exception) {
+                            Log.e("Navigation", "Failed to upload FCM token: ${e.message}")
+                        }
+                    }
+                }
             }
         }
     }
@@ -201,6 +220,10 @@ fun LoopChatNavigation(
                     isAuthenticated = true
                     navController.navigate(Screen.Home.route) { popUpTo(Screen.Auth.route) { inclusive = true } }
                     IncomingCallManager.startListening(context)
+                    com.loopchat.app.data.realtime.SupabaseRealtimeClient.initialize(context)
+                    scope.launch {
+                        com.loopchat.app.data.realtime.SupabaseRealtimeClient.connectGlobal()
+                    }
                 })
             }
 
@@ -213,6 +236,7 @@ fun LoopChatNavigation(
                     onLogout = {
                         scope.launch {
                             SupabaseClient.signOut(context)
+                            SupabaseClient.resetForReauth() // Allow re-initialization on next login
                             IncomingCallManager.stopListening()
                             // NOTE: Do NOT clear BiometricCredentialStore or biometric prefs here.
                             // Biometric login is designed to survive logout so the user can
@@ -231,6 +255,7 @@ fun LoopChatNavigation(
                     onLogout = {
                         scope.launch {
                             SupabaseClient.signOut(context)
+                            SupabaseClient.resetForReauth() // Allow re-initialization on next login
                             IncomingCallManager.stopListening()
                             // NOTE: Do NOT clear BiometricCredentialStore or biometric prefs here.
                             // Biometric login is designed to survive logout so the user can
@@ -274,6 +299,46 @@ fun LoopChatNavigation(
                     onNavigateToProfile = { uid -> navController.navigate(Screen.UserProfile.createRoute(uid)) },
                     onNavigateToGroupInfo = { gid -> navController.navigate(Screen.GroupInfo.createRoute(gid)) },
                     onNavigateToMediaGallery = { cid -> navController.navigate(Screen.MediaGallery.createRoute(cid)) }
+                )
+            }
+
+            composable(
+                route = Screen.Call.route,
+                arguments = listOf(
+                    navArgument("calleeId") { type = NavType.StringType },
+                    navArgument("callType") { type = NavType.StringType },
+                    navArgument("isIncoming") { type = NavType.BoolType },
+                    navArgument("callId") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument("roomUrl") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument("calleeToken") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument("calleeName") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument("isGroupCall") { type = NavType.BoolType; defaultValue = false },
+                    navArgument("groupId") { type = NavType.StringType; nullable = true; defaultValue = null }
+                )
+            ) { backStackEntry ->
+                val calleeId = backStackEntry.arguments?.getString("calleeId") ?: ""
+                val callType = backStackEntry.arguments?.getString("callType") ?: "audio"
+                val isIncoming = backStackEntry.arguments?.getBoolean("isIncoming") ?: false
+                val callId = backStackEntry.arguments?.getString("callId")
+                val roomUrlEncoded = backStackEntry.arguments?.getString("roomUrl")
+                val roomUrl = roomUrlEncoded?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+                val calleeToken = backStackEntry.arguments?.getString("calleeToken")
+                val calleeNameEncoded = backStackEntry.arguments?.getString("calleeName")
+                val calleeName = calleeNameEncoded?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+                val isGroupCall = backStackEntry.arguments?.getBoolean("isGroupCall") ?: false
+                val groupId = backStackEntry.arguments?.getString("groupId")
+
+                CallScreen(
+                    calleeId = calleeId,
+                    callType = callType,
+                    isIncoming = isIncoming,
+                    calleeName = calleeName,
+                    initialCallId = callId,
+                    initialRoomUrl = roomUrl,
+                    initialCalleeToken = calleeToken,
+                    isGroupCall = isGroupCall,
+                    groupId = groupId,
+                    onEndCall = { navController.popBackStack() }
                 )
             }
 
@@ -361,6 +426,52 @@ fun LoopChatNavigation(
                 AddGroupMemberScreen(groupId = gid, viewModel = vm, onBackClick = { navController.popBackStack() }, onSuccess = { navController.popBackStack() })
             }
             
+            composable(Screen.IncomingCall.route) {
+                val callData = incomingCallData
+                if (callData == null) {
+                    // No incoming call data — go back to wherever we came from
+                    LaunchedEffect(Unit) { navController.popBackStack() }
+                    return@composable
+                }
+                val callerName = callData.callerProfile?.fullName
+                    ?: callData.callerProfile?.username
+                    ?: "Unknown"
+                val callType = callData.call.callType ?: "audio"
+                IncomingCallScreen(
+                    callerName = callerName,
+                    callType = callType,
+                    onAccept = {
+                        scope.launch {
+                            val acceptedCall = IncomingCallManager.acceptCall()
+                            if (acceptedCall != null) {
+                                navController.navigate(
+                                    Screen.Call.createRoute(
+                                        calleeId  = acceptedCall.callerId,
+                                        callType  = acceptedCall.callType ?: "audio",
+                                        isIncoming = true,
+                                        callId    = acceptedCall.id,
+                                        roomUrl   = acceptedCall.roomUrl,
+                                        calleeToken = acceptedCall.calleeToken,
+                                        calleeName  = callerName
+                                    )
+                                ) {
+                                    popUpTo(Screen.IncomingCall.route) { inclusive = true }
+                                }
+                            } else {
+                                // Accept failed — just go back
+                                navController.popBackStack()
+                            }
+                        }
+                    },
+                    onReject = {
+                        scope.launch {
+                            IncomingCallManager.rejectCall()
+                            navController.popBackStack()
+                        }
+                    }
+                )
+            }
+
             composable(Screen.Status.route) { StatusScreen(onBackClick = { navController.popBackStack() }) }
             composable(Screen.Search.route) { SearchScreen(onBackClick = { navController.popBackStack() }) }
             composable(Screen.Notifications.route) { NotificationsScreen(onBackClick = { navController.popBackStack() }) }
@@ -391,6 +502,7 @@ fun LoopChatNavigation(
                 onSignOut = {
                     scope.launch {
                         SupabaseClient.signOut(context)
+                        SupabaseClient.resetForReauth() // Allow re-initialization on next login
                         // NOTE: Do NOT clear BiometricCredentialStore or biometric prefs here.
                         // The user signing out from the lock screen still wants fingerprint
                         // login available on the next sign-in attempt.
@@ -401,5 +513,6 @@ fun LoopChatNavigation(
                 }
             )
         }
+
     }
 }

@@ -2,6 +2,8 @@ package com.loopchat.app.ui.screens
 
 import android.media.AudioManager
 import android.util.Log
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
@@ -128,6 +130,28 @@ fun CallScreen(
     LaunchedEffect(dailyError) {
         dailyError?.let { 
             addErrorLog("Daily.co SDK Error: $it") 
+            
+            // Perform diagnostic checks for DNS / internet connectivity
+            if (it.contains("DNS", ignoreCase = true) || 
+                it.contains("lookup", ignoreCase = true) || 
+                it.contains("hostname", ignoreCase = true) ||
+                it.contains("address", ignoreCase = true)) {
+                
+                val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                val activeNetwork = cm?.activeNetwork
+                val capabilities = cm?.getNetworkCapabilities(activeNetwork)
+                val isNetworkConnected = capabilities?.let { cap ->
+                    cap.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                    cap.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                    cap.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+                } ?: false
+                
+                if (!isNetworkConnected) {
+                    addErrorLog("Troubleshooting: No internet connection detected. Please verify your cellular data or Wi-Fi is active and has internet access.")
+                } else {
+                    addErrorLog("Troubleshooting: DNS lookup failed while internet is active. This is common on Jio 5G/Airtel if carrier DNS blocks the signaling server. Try setting Private DNS to 'Automatic' or off in Android Settings, or connect to Wi-Fi/VPN.")
+                }
+            }
             callStatus = "Error connecting media"
         }
     }
@@ -272,7 +296,7 @@ fun CallScreen(
             } catch (e: Exception) {
                 Log.w(TAG, "CameraX release failed: ${e.message}")
             }
-            delay(300) // Brief delay for hardware handoff
+            delay(1500) // Extended delay for reliable camera hardware handoff on slower/older devices
             DailyCallManager.initialize(context)
             Log.d(TAG, "Permissions granted and ready. Joining Daily room: $roomUrl")
             DailyCallManager.joinCall(
@@ -626,18 +650,31 @@ fun CallScreen(
                 return@LaunchedEffect
             }
             
-            // Verify that the acceptance was actually recorded in the DB
+            // Verify that the acceptance was actually recorded in the DB (with retry for network latency)
             callStatus = "Verifying connection..."
             try {
-                val verifyResponse = httpClient.get("${BuildConfig.SUPABASE_URL}/rest/v1/calls") {
-                    parameter("select", "*")
-                    parameter("id", "eq.${acceptedCallId ?: callId}")
-                    header("apikey", BuildConfig.SUPABASE_ANON_KEY)
-                    header("Authorization", "Bearer $accessToken")
-                    header("Accept", "application/vnd.pgrst.object+json")
+                var verifiedCall: Call? = null
+                for (attempt in 1..4) {
+                    val verifyResponse = httpClient.get("${BuildConfig.SUPABASE_URL}/rest/v1/calls") {
+                        parameter("select", "*")
+                        parameter("id", "eq.${acceptedCallId ?: callId}")
+                        header("apikey", BuildConfig.SUPABASE_ANON_KEY)
+                        header("Authorization", "Bearer $accessToken")
+                        header("Accept", "application/vnd.pgrst.object+json")
+                    }
+                    if (verifyResponse.status.isSuccess()) {
+                        val call: Call = verifyResponse.body()
+                        verifiedCall = call
+                        if (call.status == "accepted") {
+                            break
+                        }
+                    }
+                    if (attempt < 4) {
+                        delay(250) // Wait 250ms for DB write to settle
+                    }
                 }
-                if (verifyResponse.status.isSuccess()) {
-                    val verifiedCall: Call = verifyResponse.body()
+                
+                if (verifiedCall != null) {
                     if (verifiedCall.status == "accepted") {
                         Log.d(TAG, "=== DB CONFIRMED: Call accepted ===")
                     } else {
@@ -645,9 +682,8 @@ fun CallScreen(
                         addErrorLog("Warning: DB status is '${verifiedCall.status}', not 'accepted'")
                     }
                 } else {
-                    val errorBody = verifyResponse.bodyAsText()
-                    Log.e(TAG, "Verify response failed: ${verifyResponse.status} - $errorBody")
-                    addErrorLog("Verification failed: ${verifyResponse.status} - $errorBody")
+                    Log.e(TAG, "Verify response failed: could not fetch call data")
+                    addErrorLog("Verification failed: could not fetch call data")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Could not verify call status: ${e.message}, proceeding anyway")
@@ -960,11 +996,10 @@ fun CallScreen(
                             }
                         }
 
-                        // Local Participant Video (Picture-in-Picture) — larger and more visible
                         val localVideoTrack = dailyLocalParticipant?.media?.camera?.track
                         val localCameraState = dailyLocalParticipant?.media?.camera?.state
-                        
-                        if (dailyLocalParticipant != null && !isVideoOff && localCameraState == co.daily.model.MediaState.playable && localVideoTrack != null) {
+
+                        if (dailyLocalParticipant != null && !isVideoOff && localCameraState != co.daily.model.MediaState.off && localVideoTrack != null) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)
@@ -974,14 +1009,36 @@ fun CallScreen(
                                     .clip(RoundedCornerShape(16.dp))
                                     .border(2.dp, SurfaceVariant.copy(alpha = 0.8f), RoundedCornerShape(16.dp))
                                     .background(Color.Black)
-                                    .clickable { /* Tap to swap views in future */ }
+                                    .clickable { /* Tap to swap views in future */ },
+                                contentAlignment = Alignment.Center
                             ) {
-                                key("local") {
-                                    DailyVideoView(
-                                        videoTrack = localVideoTrack,
-                                        modifier = Modifier.fillMaxSize(),
-                                        scaleMode = VideoView.VideoScaleMode.FILL
-                                    )
+                                if (localCameraState == co.daily.model.MediaState.playable) {
+                                    key("local") {
+                                        DailyVideoView(
+                                            videoTrack = localVideoTrack,
+                                            modifier = Modifier.fillMaxSize(),
+                                            scaleMode = VideoView.VideoScaleMode.FILL,
+                                            isOverlay = true
+                                        )
+                                    }
+                                } else {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center,
+                                        modifier = Modifier.padding(8.dp)
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(24.dp),
+                                            color = Primary,
+                                            strokeWidth = 2.dp
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = "Starting...",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = TextSecondary
+                                        )
+                                    }
                                 }
                             }
                         }

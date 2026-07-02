@@ -35,7 +35,7 @@ export const useConversations = (userId: string | undefined) => {
           // Get conversation details
           const { data: convData, error: convError } = await supabase
             .from("conversations")
-            .select("id, updated_at")
+            .select("id, updated_at, is_group, group_id")
             .eq("id", convId)
             .single();
 
@@ -44,13 +44,41 @@ export const useConversations = (userId: string | undefined) => {
             return null;
           }
 
-          // Get other participant's user_id
+          // If it is a group chat, fetch group details from the groups table
+          if (convData.is_group && convData.group_id) {
+            const { data: groupData, error: groupError } = await supabase
+              .from("groups")
+              .select("id, name, avatar_url")
+              .eq("id", convData.group_id)
+              .single();
+
+            if (groupError) {
+              console.error("Error fetching group details:", groupError);
+            }
+
+            return {
+              id: convData.id,
+              updated_at: convData.updated_at,
+              is_group: true,
+              group: groupData || null,
+              participant: groupData ? {
+                id: groupData.id,
+                user_id: "",
+                full_name: groupData.name,
+                username: groupData.name,
+                avatar_url: groupData.avatar_url || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(groupData.name)}`,
+                status: "group",
+              } : null,
+            };
+          }
+
+          // Get other participant's user_id for direct messages
           const { data: otherParticipantData, error: otherParticipantError } = await supabase
             .from("conversation_participants")
             .select("user_id")
             .eq("conversation_id", convId)
             .neq("user_id", userId)
-            .single();
+            .maybeSingle();
 
           if (otherParticipantError || !otherParticipantData) {
             console.error("Error fetching other participant:", otherParticipantError);

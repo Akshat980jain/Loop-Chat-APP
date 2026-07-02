@@ -192,6 +192,9 @@ fun AuthScreen(
                                 }
                             }
                         )
+                        AuthView.FORGOT_PASSWORD -> ForgotPasswordForm(
+                            viewModel = viewModel
+                        )
                     }
                 }
             }
@@ -251,7 +254,7 @@ private fun AuthViewToggle(
         color = Surface
     ) {
         Row(modifier = Modifier.padding(4.dp)) {
-            AuthView.entries.forEach { view ->
+            AuthView.entries.filter { it != AuthView.FORGOT_PASSWORD }.forEach { view ->
                 val isSelected = view == currentView
                 Box(
                     modifier = Modifier
@@ -363,7 +366,10 @@ private fun LoginForm(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
             ) {
-                TextButton(onClick = { /* TODO: Forgot password flow */ }) {
+                TextButton(onClick = { 
+                    viewModel.resetForgotPasswordState()
+                    viewModel.switchView(AuthView.FORGOT_PASSWORD)
+                }) {
                     Text("Forgot Password?", color = Primary, fontSize = 13.sp)
                 }
             }
@@ -966,5 +972,419 @@ private fun SignupForm(
             enabled = !viewModel.isLoading,
             isLoading = viewModel.isLoading
         )
+    }
+}
+
+@Composable
+private fun ForgotPasswordForm(
+    viewModel: AuthViewModel
+) {
+    Column {
+        if (viewModel.passwordResetSuccess) {
+            // SUCCESS STATE
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(Primary.copy(alpha = 0.1f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        tint = Primary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                Text(
+                    text = "Password Reset Success!",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary,
+                    textAlign = TextAlign.Center
+                )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Text(
+                    text = "Your password has been successfully updated. You can now log in with your new password.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center
+                )
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                GradientButtonLarge(
+                    text = "Back to Sign In",
+                    onClick = {
+                        viewModel.resetForgotPasswordState()
+                        viewModel.switchView(AuthView.LOGIN)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        } else {
+            // Toggle reset method
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(
+                        width = 1.dp,
+                        color = SurfaceVariant,
+                        shape = RoundedCornerShape(10.dp)
+                    ),
+                shape = RoundedCornerShape(10.dp),
+                color = SurfaceVariant.copy(alpha = 0.5f)
+            ) {
+                Row(modifier = Modifier.padding(2.dp)) {
+                    val methods = listOf(LoginMethod.EMAIL, LoginMethod.PHONE)
+                    methods.forEach { method ->
+                        val isSelected = method == viewModel.resetMethod
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) Primary else Color.Transparent)
+                                .clickable { viewModel.updateResetMethod(method) }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (method == LoginMethod.EMAIL) "Email" else "Phone OTP",
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (isSelected) Color.White else TextSecondary,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            if (viewModel.resetMethod == LoginMethod.EMAIL) {
+                // EMAIL RESET FLOW
+                if (viewModel.resetEmailSent) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(Primary.copy(alpha = 0.1f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Email,
+                                contentDescription = null,
+                                tint = Primary,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        Text(
+                            text = "Check your email",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary,
+                            textAlign = TextAlign.Center
+                        )
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Text(
+                            text = "We sent a password reset link to\n${viewModel.formState.email}\nPlease click the link to reset your password.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextSecondary,
+                            textAlign = TextAlign.Center
+                        )
+                        
+                        Spacer(modifier = Modifier.height(24.dp))
+                        
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.resetForgotPasswordState()
+                                viewModel.switchView(AuthView.LOGIN)
+                            },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Primary.copy(alpha = 0.5f))
+                        ) {
+                            Text("Back to Login", color = Primary)
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "Enter your email address and we'll send you a secure link to reset your password.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextSecondary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    Spacer(modifier = Modifier.height(20.dp))
+                    
+                    OutlinedTextField(
+                        value = viewModel.formState.email,
+                        onValueChange = { viewModel.updateEmail(it) },
+                        label = { Text("Email Address") },
+                        placeholder = { Text("Enter your email", color = TextMuted) },
+                        leadingIcon = {
+                            Icon(Icons.Default.Email, contentDescription = null, tint = Primary)
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Primary,
+                            unfocusedBorderColor = SurfaceVariant,
+                            focusedLabelColor = Primary,
+                            cursorColor = Primary
+                        )
+                    )
+                    
+                    Spacer(modifier = Modifier.height(24.dp))
+                    
+                    GradientButtonLarge(
+                        text = "Send Reset Link",
+                        onClick = { viewModel.handleForgotPasswordEmail() },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !viewModel.isLoading && viewModel.formState.email.isNotBlank(),
+                        isLoading = viewModel.isLoading
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    TextButton(
+                        onClick = {
+                            viewModel.resetForgotPasswordState()
+                            viewModel.switchView(AuthView.LOGIN)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Back to Sign In", color = TextSecondary)
+                    }
+                }
+            } else {
+                // PHONE OTP RESET FLOW
+                if (!viewModel.resetOtpSent) {
+                    // Enter phone phase
+                    Text(
+                        text = "Enter your registered phone number to receive a 6-digit OTP code to reset your password.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextSecondary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    Spacer(modifier = Modifier.height(20.dp))
+                    
+                    OutlinedTextField(
+                        value = viewModel.formState.phone,
+                        onValueChange = { viewModel.updatePhone(it) },
+                        label = { Text("Phone Number") },
+                        placeholder = { Text("+91XXXXXXXXXX", color = TextMuted) },
+                        leadingIcon = {
+                            Icon(Icons.Default.Phone, contentDescription = null, tint = Primary)
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Primary,
+                            unfocusedBorderColor = SurfaceVariant,
+                            focusedLabelColor = Primary,
+                            cursorColor = Primary
+                        )
+                    )
+                    
+                    Spacer(modifier = Modifier.height(24.dp))
+                    
+                    GradientButtonLarge(
+                        text = "Send Verification Code",
+                        onClick = { viewModel.handleForgotPasswordPhoneSend() },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !viewModel.isLoading && viewModel.formState.phone.isNotBlank(),
+                        isLoading = viewModel.isLoading
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    TextButton(
+                        onClick = {
+                            viewModel.resetForgotPasswordState()
+                            viewModel.switchView(AuthView.LOGIN)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Back to Sign In", color = TextSecondary)
+                    }
+                } else {
+                    // Enter OTP and new password phase
+                    Text(
+                        text = "Enter the code sent to ${viewModel.phoneForReset} and type your new password.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextSecondary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    // Show Dev OTP banner if sandbox is active
+                    viewModel.devOtpReceived?.let { otp ->
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = Primary.copy(alpha = 0.1f)
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "Sandbox Mode Active",
+                                    fontWeight = FontWeight.Bold,
+                                    color = Primary,
+                                    fontSize = 13.sp
+                                )
+                                Text(
+                                    text = "Use verification code: $otp",
+                                    color = TextPrimary,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 15.sp
+                                )
+                            }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(20.dp))
+                    
+                    OutlinedTextField(
+                        value = viewModel.otpCode,
+                        onValueChange = { viewModel.updateOtpCode(it) },
+                        label = { Text("6-Digit Code") },
+                        placeholder = { Text("123456", color = TextMuted) },
+                        leadingIcon = {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = Primary)
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Primary,
+                            unfocusedBorderColor = SurfaceVariant,
+                            focusedLabelColor = Primary,
+                            cursorColor = Primary
+                        )
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    OutlinedTextField(
+                        value = viewModel.formState.password,
+                        onValueChange = { viewModel.updatePassword(it) },
+                        label = { Text("New Password") },
+                        placeholder = { Text("••••••••", color = TextMuted) },
+                        leadingIcon = {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = Primary)
+                        },
+                        trailingIcon = {
+                            IconButton(onClick = { viewModel.togglePasswordVisibility() }) {
+                                Icon(
+                                    imageVector = if (viewModel.showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (viewModel.showPassword) "Hide password" else "Show password",
+                                    tint = TextSecondary
+                                )
+                            }
+                        },
+                        visualTransformation = if (viewModel.showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Primary,
+                            unfocusedBorderColor = SurfaceVariant,
+                            focusedLabelColor = Primary,
+                            cursorColor = Primary
+                        )
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    OutlinedTextField(
+                        value = viewModel.formState.confirmPassword,
+                        onValueChange = { viewModel.updateConfirmPassword(it) },
+                        label = { Text("Confirm New Password") },
+                        placeholder = { Text("••••••••", color = TextMuted) },
+                        leadingIcon = {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = Primary)
+                        },
+                        visualTransformation = if (viewModel.showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Primary,
+                            unfocusedBorderColor = SurfaceVariant,
+                            focusedLabelColor = Primary,
+                            cursorColor = Primary
+                        )
+                    )
+                    
+                    Spacer(modifier = Modifier.height(24.dp))
+                    
+                    GradientButtonLarge(
+                        text = "Reset Password",
+                        onClick = {
+                            viewModel.handleForgotPasswordPhoneVerify {
+                                // Handled via state change
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !viewModel.isLoading && viewModel.otpCode.length == 6 && viewModel.formState.password.isNotBlank(),
+                        isLoading = viewModel.isLoading
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        TextButton(
+                            onClick = { viewModel.handleForgotPasswordPhoneSend() },
+                            enabled = !viewModel.isLoading
+                        ) {
+                            Text("Resend Code", color = Primary)
+                        }
+                        
+                        TextButton(
+                            onClick = { viewModel.resetForgotPasswordState() }
+                        ) {
+                            Text("Change Phone", color = TextSecondary)
+                        }
+                    }
+                }
+            }
+        }
     }
 }

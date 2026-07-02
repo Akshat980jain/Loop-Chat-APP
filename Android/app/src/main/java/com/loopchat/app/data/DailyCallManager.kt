@@ -23,7 +23,10 @@ import kotlinx.coroutines.flow.update
  */
 object DailyCallManager : CallClientListener {
     private const val TAG = "DailyCallManager"
-    
+
+    // Managed scope so camera-polling coroutines are cancelled on cleanup()/release()
+    private var managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
     // The core native SDK client instance
     var callClient: CallClient? = null
         private set
@@ -75,7 +78,8 @@ object DailyCallManager : CallClientListener {
      * Join a Daily.co call room using WebRTC
      */
     fun joinCall(roomUrl: String, meetingToken: String? = null, isVideoCall: Boolean = true) {
-        Log.d(TAG, "Joining room: $roomUrl, isVideoCall=$isVideoCall")
+        val trimmedUrl = roomUrl.trim()
+        Log.d(TAG, "Joining room: $trimmedUrl, isVideoCall=$isVideoCall")
         resetState()
         
         intendedInitialVideoState = isVideoCall
@@ -90,10 +94,17 @@ object DailyCallManager : CallClientListener {
             setInputsEnabled(camera = false, microphone = false)
             
             // STEP 2: Join the room
-            join(roomUrl, meetingToken?.let { MeetingToken(it) }) { result ->
+            join(trimmedUrl, meetingToken?.let { MeetingToken(it) }) { result ->
                 result.error?.let { err -> 
                     Log.e(TAG, "Join error: $err")
-                    _error.value = err.toString() 
+                    val errMsg = err.toString()
+                    val cleanMsg = if (errMsg.contains("failed to lookup address information") || 
+                        errMsg.contains("No address associated with hostname")) {
+                        "DNS Resolution Failed: Unable to resolve signaling hostname. Please check your internet connection or Private DNS settings."
+                    } else {
+                        errMsg
+                    }
+                    _error.value = cleanMsg
                 }
             }
         } ?: Log.e(TAG, "Cannot join: CallClient is null. Did you initialize?")
@@ -118,6 +129,9 @@ object DailyCallManager : CallClientListener {
     fun cleanup() {
         Log.d(TAG, "Full cleanup of DailyCallManager")
         callClient?.leave()
+        // Cancel any in-flight coroutines (e.g. camera-init polling) and create a fresh scope
+        managerScope.cancel()
+        managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         resetState()
     }
 
@@ -182,8 +196,12 @@ object DailyCallManager : CallClientListener {
             if (frontCamera != null) {
                 Log.d(TAG, "Selecting front camera: ${frontCamera.deviceId}")
                 setCameraDevice(frontCamera.deviceId)
+            } else if (cameraDevices.isNotEmpty()) {
+                val fallbackCamera = cameraDevices.first()
+                Log.w(TAG, "No front camera found. Falling back to first available camera: ${fallbackCamera.deviceId}")
+                setCameraDevice(fallbackCamera.deviceId)
             } else {
-                Log.w(TAG, "No front camera found in: ${cameraDevices.map { it.deviceId }}")
+                Log.w(TAG, "No camera devices available at all")
             }
         } ?: Log.e(TAG, "Cannot get available devices")
     }
@@ -275,9 +293,10 @@ object DailyCallManager : CallClientListener {
                 // The camera hardware takes time to initialize after setInputsEnabled.
                 // Poll participant state to catch when the local camera becomes playable.
                 if (intendedInitialVideoState) {
-                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                    // Use managerScope (not GlobalScope) so this is cancelled when call ends
+                    managerScope.launch {
                         repeat(10) { attempt ->
-                            kotlinx.coroutines.delay(500)
+                            delay(500)
                             updateParticipants()
                             val localCamState = _localParticipant.value?.media?.camera?.state
                             Log.d(TAG, "Camera init poll #${attempt + 1}: localCameraState=$localCamState")
@@ -327,6 +346,12 @@ object DailyCallManager : CallClientListener {
 
     override fun onError(message: String) {
         Log.e(TAG, "Daily.co SDK Error: $message")
-        _error.value = message
+        val cleanMsg = if (message.contains("failed to lookup address information") || 
+            message.contains("No address associated with hostname")) {
+            "DNS Resolution Failed: Unable to resolve signaling hostname. Please check your internet connection or Private DNS settings."
+        } else {
+            message
+        }
+        _error.value = cleanMsg
     }
 }

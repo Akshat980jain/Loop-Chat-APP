@@ -42,6 +42,13 @@ export const IncomingCallHandler = () => {
 
   const { playRingtone, stopRingtone } = useRingtone();
   const { createCallRecord } = useCallHistory();
+  
+  const createCallRecordRef = useRef(createCallRecord);
+  
+  // Keep call record creator in sync without triggering useEffect dependency changes
+  useEffect(() => {
+    createCallRecordRef.current = createCallRecord;
+  }, [createCallRecord]);
 
   // Keep refs in sync to avoid resubscribing channels on state changes
   useEffect(() => {
@@ -131,7 +138,7 @@ export const IncomingCallHandler = () => {
 
       // Record missed call
       if (callerProfileRef.current) {
-        createCallRecord({
+        createCallRecordRef.current({
           other_participant_name: callerProfileRef.current.full_name,
           other_participant_avatar: callerProfileRef.current.avatar_url || undefined,
           call_type: incomingCall.call_type as "audio" | "video",
@@ -148,7 +155,7 @@ export const IncomingCallHandler = () => {
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
-  }, [incomingCall, isMobile, createCallRecord, stopRingtone]);
+  }, [incomingCall, isMobile, stopRingtone]);
 
   // Subscribe to incoming calls
   useEffect(() => {
@@ -222,7 +229,7 @@ export const IncomingCallHandler = () => {
             // Record missed call if it was never answered
             const profile = callerProfileRef.current;
             if (call.status === "ended" && !call.started_at && profile) {
-              createCallRecord({
+              createCallRecordRef.current({
                 other_participant_name: profile.full_name,
                 other_participant_avatar: profile.avatar_url || undefined,
                 call_type: call.call_type as "audio" | "video",
@@ -245,7 +252,7 @@ export const IncomingCallHandler = () => {
       console.log("[IncomingCallHandler] unsubscribing for user:", userId);
       supabase.removeChannel(channel);
     };
-  }, [userId, createCallRecord, isMobile, navigate]);
+  }, [userId, isMobile, navigate]);
 
   const handleAccept = async () => {
     if (!incomingCall) return;

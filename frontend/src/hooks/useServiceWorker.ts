@@ -29,7 +29,18 @@ export const useServiceWorker = () => {
 
       return reg;
     } catch (error) {
-      console.error('Service Worker registration failed:', error);
+      if (window.location.hostname === 'localhost') {
+        console.warn(
+          'Service Worker registration failed: This is normal in local development if using a self-signed SSL certificate without browser trust. ' +
+          'To enable Service Workers locally with HTTPS: \n' +
+          '1. Open chrome://flags/#allow-insecure-localhost in Chrome\n' +
+          '2. Enable the flag\n' +
+          '3. Relaunch Chrome.\n' +
+          'Original Error:', error
+        );
+      } else {
+        console.error('Service Worker registration failed:', error);
+      }
       return null;
     }
   }, [isSupported]);

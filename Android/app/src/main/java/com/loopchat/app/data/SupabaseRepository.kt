@@ -10,6 +10,8 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
@@ -43,7 +45,7 @@ object SupabaseRepository {
     /**
      * Get a sender profile, using cache first to avoid repeated API calls
      */
-    private suspend fun getCachedProfile(userId: String, accessToken: String): Profile? {
+    suspend fun getCachedProfile(userId: String, accessToken: String): Profile? {
         profileCache[userId]?.let { return it }
         val profile = fetchProfileForCache(userId, accessToken)
         profile?.let { profileCache[userId] = it }
@@ -149,21 +151,27 @@ object SupabaseRepository {
                 return Result.success(emptyList())
             }
 
-            // For each conversation, get participants and profile + last message
-            val conversations = allConversations.mapNotNull { conv ->
-                val participant = if (conv.is_group) null else getAnyParticipantProfile(conv.id, userId, accessToken)
-                val lastMsg = getLastMessage(conv.id, accessToken)
-                ConversationWithParticipant(
-                    id = conv.id,
-                    updatedAt = conv.updated_at,
-                    lastMessage = lastMsg?.first,
-                    lastMessageType = lastMsg?.second,
-                    participant = participant,
-                    isGroup = conv.is_group,
-                    groupId = conv.group_id,
-                    groupName = conv.groups?.name,
-                    groupAvatarUrl = conv.groups?.avatar_url
-                )
+            // PERFORMANCE: Fetch all participant profiles + last messages in parallel
+            // instead of sequential per-conversation HTTP calls (N+1 → 1 round)
+            val conversations = coroutineScope {
+                allConversations.map { conv ->
+                    async {
+                        val participant = if (conv.is_group) null
+                            else getAnyParticipantProfile(conv.id, userId, accessToken)
+                        val lastMsg = getLastMessage(conv.id, accessToken)
+                        ConversationWithParticipant(
+                            id = conv.id,
+                            updatedAt = conv.updated_at,
+                            lastMessage = lastMsg?.first,
+                            lastMessageType = lastMsg?.second,
+                            participant = participant,
+                            isGroup = conv.is_group,
+                            groupId = conv.group_id,
+                            groupName = conv.groups?.name,
+                            groupAvatarUrl = conv.groups?.avatar_url
+                        )
+                    }
+                }.map { it.await() }
             }
 
             android.util.Log.d("SupabaseRepo", "Returning ${conversations.size} conversations")
@@ -328,28 +336,32 @@ object SupabaseRepository {
 
             val contacts: List<Contact> = contactsResponse.body()
             
-            // Fetch profiles for each contact
-            val contactsWithProfiles = contacts.mapNotNull { contact ->
-                val profileResponse = httpClient.get("$supabaseUrl/rest/v1/profiles") {
-                    parameter("select", "id,user_id,full_name,username,avatar_url,status")
-                    parameter("user_id", "eq.${contact.contact_user_id}")
-                    header("apikey", supabaseKey)
-                    header("Authorization", "Bearer $accessToken")
-                    header("Accept", "application/vnd.pgrst.object+json")
-                }
+            // PERFORMANCE: Fetch all contact profiles in parallel instead of sequentially
+            val contactsWithProfiles = coroutineScope {
+                contacts.map { contact ->
+                    async {
+                        val profileResponse = httpClient.get("$supabaseUrl/rest/v1/profiles") {
+                            parameter("select", "id,user_id,full_name,username,avatar_url,status")
+                            parameter("user_id", "eq.${contact.contact_user_id}")
+                            header("apikey", supabaseKey)
+                            header("Authorization", "Bearer $accessToken")
+                            header("Accept", "application/vnd.pgrst.object+json")
+                        }
 
-                val profile: Profile? = if (profileResponse.status.isSuccess()) {
-                    try { profileResponse.body() } catch (e: Exception) { null }
-                } else null
+                        val profile: Profile? = if (profileResponse.status.isSuccess()) {
+                            try { profileResponse.body() } catch (e: Exception) { null }
+                        } else null
 
-                ContactWithProfile(
-                    id = contact.id,
-                    userId = contact.user_id,
-                    contactUserId = contact.contact_user_id,
-                    nickname = contact.nickname,
-                    createdAt = contact.created_at,
-                    profile = profile
-                )
+                        ContactWithProfile(
+                            id = contact.id,
+                            userId = contact.user_id,
+                            contactUserId = contact.contact_user_id,
+                            nickname = contact.nickname,
+                            createdAt = contact.created_at,
+                            profile = profile
+                        )
+                    }
+                }.map { it.await() }
             }
 
             Result.success(contactsWithProfiles)

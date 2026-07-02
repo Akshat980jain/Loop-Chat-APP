@@ -95,9 +95,13 @@ class MainActivity : FragmentActivity() {
      * Handle intents from CallService for navigating to call screen
      */
     private fun handleIntent(intent: Intent?) {
-        val navigateTo = intent?.getStringExtra("navigate_to")
+        if (intent == null) return
+        val action = intent.action
+        val navigateTo = intent.getStringExtra("navigate_to")
         
-        if (navigateTo == "call") {
+        Log.d(TAG, "handleIntent: action=$action, navigateTo=$navigateTo")
+        
+        if (action == CallService.ACTION_ACCEPT_CALL || navigateTo == "call") {
             val callId = intent.getStringExtra(CallService.EXTRA_CALL_ID) ?: ""
             val callerId = intent.getStringExtra(CallService.EXTRA_CALLER_ID) ?: ""
             val callerName = intent.getStringExtra(CallService.EXTRA_CALLER_NAME) ?: "Unknown"
@@ -108,6 +112,25 @@ class MainActivity : FragmentActivity() {
             
             Log.d(TAG, "Navigating to call: callId=$callId, from=$callerName, type=$callType")
             
+            // Forward the accept action to CallService so it executes DB updates & ringtone teardown
+            if (action == CallService.ACTION_ACCEPT_CALL) {
+                Log.d(TAG, "Intent action is ACTION_ACCEPT_CALL, forwarding to CallService")
+                val serviceIntent = Intent(this, CallService::class.java).apply {
+                    this.action = CallService.ACTION_ACCEPT_CALL
+                    putExtra(CallService.EXTRA_CALL_ID, callId)
+                    putExtra(CallService.EXTRA_CALLER_ID, callerId)
+                    putExtra(CallService.EXTRA_CALLER_NAME, callerName)
+                    putExtra(CallService.EXTRA_CALL_TYPE, callType)
+                    putExtra(CallService.EXTRA_ROOM_URL, roomUrl)
+                    putExtra(CallService.EXTRA_CALLEE_TOKEN, calleeToken)
+                }
+                try {
+                    startForegroundService(serviceIntent)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to start CallService for accept: ${e.message}")
+                }
+            }
+            
             pendingCallNavigation.value = CallNavigationData(
                 callId = callId,
                 callerId = callerId,
@@ -115,7 +138,7 @@ class MainActivity : FragmentActivity() {
                 callType = callType,
                 roomUrl = roomUrl,
                 calleeToken = calleeToken,
-                isIncoming = isIncoming
+                isIncoming = isIncoming || (action == CallService.ACTION_ACCEPT_CALL)
             )
         }
     }

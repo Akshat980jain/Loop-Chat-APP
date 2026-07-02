@@ -64,11 +64,9 @@ fun HomeScreen(
     
     val onlineUsers by com.loopchat.app.data.realtime.SupabaseRealtimeClient.onlineUsers.collectAsState(initial = emptySet())
     
-    // Refresh data every time HomeScreen enters composition (e.g. navigating back from a chat)
+    // PERFORMANCE: Fire all initial data loads in parallel via initialLoad()
     LaunchedEffect(Unit) {
-        viewModel.loadConversations()
-        viewModel.loadContacts()
-        viewModel.loadCalls()
+        viewModel.initialLoad()
     }
     
     // Poll conversations every 10s while the Chats tab is active
@@ -498,23 +496,42 @@ fun ChatsTab(
             verticalArrangement = Arrangement.Center
         ) {
             Icon(
-                imageVector = Icons.Default.Error,
+                imageVector = Icons.Default.CloudOff,
                 contentDescription = null,
                 modifier = Modifier.size(64.dp),
                 tint = ErrorColor
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "Error loading chats",
+                text = "Connection Issue",
                 style = MaterialTheme.typography.titleMedium,
-                color = ErrorColor
+                color = TextPrimary
             )
             Spacer(modifier = Modifier.height(8.dp))
+            
+            val displayMessage = if (errorMessage.contains("Unable to resolve host") || 
+                                     errorMessage.contains("No address associated with hostname") ||
+                                     errorMessage.contains("timeout", ignoreCase = true) ||
+                                     errorMessage.contains("connect", ignoreCase = true)) {
+                "Unable to reach the server. Please check your internet connection and try again."
+            } else {
+                errorMessage
+            }
+            
             Text(
-                text = errorMessage,
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary
+                text = displayMessage,
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(
+                onClick = { viewModel.loadConversations(isRefresh = false) },
+                colors = ButtonDefaults.buttonColors(containerColor = Primary),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Retry", color = TextPrimary)
+            }
         }
     } else {
         Column {
@@ -1946,6 +1963,7 @@ fun SettingsTab(
                             isLoggingOut = true
                             try {
                                 SupabaseClient.signOut(context)
+                                SupabaseClient.resetForReauth()
                                 showLogoutDialog = false
                                 onLogout()
                             } catch (e: Exception) {

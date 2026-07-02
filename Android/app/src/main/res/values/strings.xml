@@ -32,7 +32,7 @@
     <!-- App Links / Passkeys -->
     <string name="asset_statements" translatable="false">
     [{
-      "include": "https://loop-chat.vercel.app/.well-known/assetlinks.json"
+      "include": "https://loop-chat-s4xf.onrender.com/.well-known/assetlinks.json"
     }]
     </string>
 </resources>

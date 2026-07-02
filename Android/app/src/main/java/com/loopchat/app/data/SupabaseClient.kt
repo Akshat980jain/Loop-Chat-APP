@@ -17,8 +17,13 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -43,8 +48,8 @@ object SupabaseClient {
             json(json)
         }
         engine {
-            connectTimeout = 30_000
-            socketTimeout = 30_000
+            connectTimeout = 8_000  // Reduced: fail fast instead of hanging
+            socketTimeout = 8_000
         }
     }
     
@@ -65,41 +70,74 @@ object SupabaseClient {
     var currentPhone: String? = null
         private set
     private var accessToken: String? = null
+    private val initMutex = Mutex()
+    @Volatile
+    private var isInitialized = false
     
     /**
      * Initialize the client and restore session from DataStore
      * Also validates and refreshes the token if needed
      */
-    suspend fun initialize(context: Context) {
-        val prefs = context.dataStore.data.first()
-        accessToken = prefs[ACCESS_TOKEN_KEY]
-        val refreshToken = prefs[REFRESH_TOKEN_KEY]
-        currentUserId = prefs[USER_ID_KEY]
-        currentEmail = prefs[USER_EMAIL_KEY]
-        currentPhone = prefs[USER_PHONE_KEY]
-        
-        // If we have a token, validate it and refresh if needed
-        if (accessToken != null) {
-            val isValid = validateToken()
-            if (!isValid && refreshToken != null) {
-                // Try to refresh the token
-                val refreshed = refreshSession(context, refreshToken)
-                isAuthenticated = refreshed
+    /**
+     * @param skipRevocationCheck Pass true when calling from a background service (e.g. CallService,
+     * FCM handler) to prevent the revocation check from calling signOut() while the user is
+     * actively using the app — which would race with the UI and cause a spurious logout.
+     */
+    suspend fun initialize(context: Context, skipRevocationCheck: Boolean = false) {
+        initMutex.withLock {
+            if (isInitialized) return
+            
+            val prefs = context.dataStore.data.first()
+            accessToken = prefs[ACCESS_TOKEN_KEY]
+            val refreshToken = prefs[REFRESH_TOKEN_KEY]
+            currentUserId = prefs[USER_ID_KEY]
+            currentEmail = prefs[USER_EMAIL_KEY]
+            currentPhone = prefs[USER_PHONE_KEY]
+            
+            // If we have a token, validate it and refresh if needed
+            if (accessToken != null) {
+                // Enforce a hard 10-second cap so a slow/unreachable server never blocks app startup.
+                val isValid = try {
+                    kotlinx.coroutines.withTimeout(10_000L) { validateToken() }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    android.util.Log.w("SupabaseClient", "Token validation timed out — treating as valid to unblock startup")
+                    true // Optimistically keep session; next real request will fail if truly expired
+                }
+                if (!isValid && refreshToken != null) {
+                    // Try to refresh the token
+                    val refreshed = try {
+                        kotlinx.coroutines.withTimeout(10_000L) { refreshSession(context, refreshToken) }
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        android.util.Log.w("SupabaseClient", "Token refresh timed out — keeping session active")
+                        true // Treat timeout as valid to prevent offline logouts
+                    }
+                    isAuthenticated = refreshed
+                } else {
+                    isAuthenticated = isValid
+                }
+                
+                // PERFORMANCE: checkSessionRevoked is non-critical — run it in background
+                // so it never blocks the loading screen. Auth is already confirmed above.
+                // IMPORTANT: Skip from background service contexts to prevent logout races.
+                if (isAuthenticated && !skipRevocationCheck) {
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val revoked = checkSessionRevoked()
+                            if (revoked) {
+                                android.util.Log.w("SupabaseClient", "Session was revoked from another device")
+                                signOut(context)
+                                isAuthenticated = false
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.w("SupabaseClient", "Session revocation check failed (non-critical): ${e.message}")
+                        }
+                    }
+                }
             } else {
-                isAuthenticated = isValid
+                isAuthenticated = false
             }
             
-            // Check if session was revoked from another device
-            if (isAuthenticated) {
-                val revoked = checkSessionRevoked()
-                if (revoked) {
-                    android.util.Log.w("SupabaseClient", "Session was revoked from another device")
-                    signOut(context)
-                    isAuthenticated = false
-                }
-            }
-        } else {
-            isAuthenticated = false
+            isInitialized = true
         }
     }
     
@@ -112,9 +150,17 @@ object SupabaseClient {
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $accessToken")
             }
-            response.status.isSuccess()
+            if (response.status.isSuccess()) {
+                true
+            } else {
+                // Keep session if it's not a definitive 400/401/403 authentication error
+                val code = response.status.value
+                code != 400 && code != 401 && code != 403
+            }
         } catch (e: Exception) {
-            false
+            // Assume token is valid during network/socket exceptions to prevent offline logouts
+            android.util.Log.w("SupabaseClient", "validateToken exception: ${e.message} - assuming valid for offline resilience")
+            true
         }
     }
     
@@ -138,12 +184,21 @@ object SupabaseClient {
                 saveSession(context, authResponse)
                 true
             } else {
-                // Refresh failed, clear session
-                signOut(context)
-                false
+                // Clear the session only if the refresh token is explicitly invalid/expired (400, 401, 403)
+                val code = response.status.value
+                if (code == 400 || code == 401 || code == 403) {
+                    android.util.Log.e("SupabaseClient", "Refresh token invalid ($code) - signing out")
+                    signOut(context)
+                    false
+                } else {
+                    // For server errors or other statuses, assume temporary and keep session active
+                    true
+                }
             }
         } catch (e: Exception) {
-            false
+            // Keep session active during connectivity/timeout issues
+            android.util.Log.w("SupabaseClient", "refreshSession exception: ${e.message} - assuming active for offline resilience")
+            true
         }
     }
     
@@ -167,7 +222,7 @@ object SupabaseClient {
             } else {
                 val errorBody = response.bodyAsText()
                 val errorMessage = try {
-                    json.decodeFromString<AuthError>(errorBody).message
+                    json.decodeFromString<AuthError>(errorBody).errorMessage
                 } catch (e: Exception) {
                     "Login failed"
                 }
@@ -193,7 +248,7 @@ object SupabaseClient {
             } else {
                 val errorBody = response.bodyAsText()
                 val errorMessage = try {
-                    json.decodeFromString<AuthError>(errorBody).message
+                    json.decodeFromString<AuthError>(errorBody).errorMessage
                 } catch (e: Exception) {
                     "Failed to send OTP"
                 }
@@ -224,7 +279,7 @@ object SupabaseClient {
             } else {
                 val errorBody = response.bodyAsText()
                 val errorMessage = try {
-                    json.decodeFromString<AuthError>(errorBody).message
+                    json.decodeFromString<AuthError>(errorBody).errorMessage
                 } catch (e: Exception) {
                     "Invalid verification code"
                 }
@@ -273,7 +328,7 @@ object SupabaseClient {
                 if (response.status.value == 429) {
                     val errorBody = response.bodyAsText()
                     val errorMessage = try {
-                        json.decodeFromString<AuthError>(errorBody).message
+                        json.decodeFromString<AuthError>(errorBody).errorMessage
                     } catch (e: Exception) {
                         "Too many login attempts. Please try again later."
                     }
@@ -281,7 +336,7 @@ object SupabaseClient {
                 } else {
                     val errorBody = response.bodyAsText()
                     val errorMessage = try {
-                        json.decodeFromString<AuthError>(errorBody).message
+                        json.decodeFromString<AuthError>(errorBody).errorMessage
                     } catch (e: Exception) {
                         "Invalid credentials"
                     }
@@ -327,7 +382,7 @@ object SupabaseClient {
             } else {
                 val errorBody = response.bodyAsText()
                 val errorMessage = try {
-                    json.decodeFromString<AuthError>(errorBody).message
+                    json.decodeFromString<AuthError>(errorBody).errorMessage
                 } catch (e: Exception) {
                     "Sign up failed"
                 }
@@ -343,7 +398,11 @@ object SupabaseClient {
     }
     
     /**
-     * Sign out and clear session
+     * Sign out and clear session.
+     * NOTE: Does NOT reset isInitialized — we keep it true so that background services
+     * calling initialize() after signOut (e.g. FCM/CallService) do not re-run initialization
+     * and accidentally overwrite the intentional logout state.
+     * The app process restarts naturally on next user launch.
      */
     suspend fun signOut(context: Context) {
         context.dataStore.edit { prefs ->
@@ -354,6 +413,16 @@ object SupabaseClient {
         currentEmail = null
         currentPhone = null
         accessToken = null
+        // NOTE: isInitialized intentionally NOT reset here. See doc above.
+    }
+    
+    /**
+     * Force-reset initialization state. Call ONLY from explicit logout flows that
+     * need to clear state and then immediately re-initialize (e.g., account switching).
+     * Do NOT call from background services.
+     */
+    fun resetForReauth() {
+        isInitialized = false
     }
     
     private suspend fun saveSession(context: Context, response: AuthResponse) {
@@ -596,37 +665,108 @@ object SupabaseClient {
         val currentToken = accessToken ?: return
         
         try {
-            // First, try to update existing record
-            val updateResponse = httpClient.request("$supabaseUrl/rest/v1/user_settings") {
-                method = HttpMethod.Patch
+            // Use single POST request with Prefer: resolution=merge-duplicates to perform a true upsert.
+            // This ensures the record is created if it does not exist, and updated if it does.
+            httpClient.post("$supabaseUrl/rest/v1/user_settings") {
                 contentType(ContentType.Application.Json)
-                parameter("user_id", "eq.$userId")
                 header("apikey", supabaseKey)
                 header("Authorization", "Bearer $currentToken")
-                header("Prefer", "return=minimal")
+                header("Prefer", "resolution=merge-duplicates")
                 setBody(mapOf(
+                    "user_id" to userId,
                     "fcm_token" to token,
                     "fcm_token_updated_at" to java.time.Instant.now().toString()
                 ))
             }
-            
-            // If no rows affected (404 or empty result), insert new record
-            if (!updateResponse.status.isSuccess()) {
-                httpClient.post("$supabaseUrl/rest/v1/user_settings") {
-                    contentType(ContentType.Application.Json)
-                    header("apikey", supabaseKey)
-                    header("Authorization", "Bearer $currentToken")
-                    header("Prefer", "return=minimal")
-                    setBody(mapOf(
-                        "user_id" to userId,
-                        "fcm_token" to token,
-                        "fcm_token_updated_at" to java.time.Instant.now().toString()
-                    ))
-                }
-            }
+            android.util.Log.d("SupabaseClient", "FCM token upserted successfully")
         } catch (e: Exception) {
             // Log error but don't crash - FCM token update is not critical
             android.util.Log.e("SupabaseClient", "Error updating FCM token: ${e.message}")
+        }
+    }
+
+    /**
+     * Send password recovery email via Supabase Auth (/recover)
+     */
+    suspend fun resetPasswordForEmail(email: String): AuthResult {
+        return try {
+            val response = httpClient.post("$supabaseUrl/auth/v1/recover") {
+                contentType(ContentType.Application.Json)
+                header("apikey", supabaseKey)
+                setBody(RecoverRequest(email))
+            }
+            
+            if (response.status.isSuccess()) {
+                AuthResult.Success("Reset email sent")
+            } else {
+                val errorBody = response.bodyAsText()
+                val errorMessage = try {
+                    json.decodeFromString<AuthError>(errorBody).errorMessage
+                } catch (e: Exception) {
+                    "Failed to send reset email"
+                }
+                AuthResult.Error(errorMessage)
+            }
+        } catch (e: Exception) {
+            AuthResult.Error(e.message ?: "Network error")
+        }
+    }
+
+    /**
+     * Invoke send-otp Edge Function for password reset
+     */
+    suspend fun sendPasswordResetOtp(phone: String): Result<EdgeFunctionResponse> {
+        return try {
+            val response = httpClient.post("$supabaseUrl/functions/v1/send-otp") {
+                contentType(ContentType.Application.Json)
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $supabaseKey")
+                setBody(SendOtpEdgeRequest(phone))
+            }
+            
+            if (response.status.isSuccess()) {
+                val body = response.body<EdgeFunctionResponse>()
+                Result.success(body)
+            } else {
+                val errorBody = response.bodyAsText()
+                val errorMsg = try {
+                    json.decodeFromString<EdgeFunctionResponse>(errorBody).error ?: "Failed to send OTP"
+                } catch (e: Exception) {
+                    "Failed to send OTP"
+                }
+                Result.failure(Exception(errorMsg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Invoke verify-otp Edge Function for password reset
+     */
+    suspend fun verifyPasswordResetOtp(phone: String, otp: String, newPassword: String): Result<EdgeFunctionResponse> {
+        return try {
+            val response = httpClient.post("$supabaseUrl/functions/v1/verify-otp") {
+                contentType(ContentType.Application.Json)
+                header("apikey", supabaseKey)
+                header("Authorization", "Bearer $supabaseKey")
+                setBody(VerifyOtpEdgeRequest(phone, otp, newPassword))
+            }
+            
+            if (response.status.isSuccess()) {
+                val body = response.body<EdgeFunctionResponse>()
+                Result.success(body)
+            } else {
+                val errorBody = response.bodyAsText()
+                val errorMsg = try {
+                    json.decodeFromString<EdgeFunctionResponse>(errorBody).error ?: "Failed to reset password"
+                } catch (e: Exception) {
+                    "Failed to reset password"
+                }
+                Result.failure(Exception(errorMsg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 }
@@ -687,10 +827,14 @@ data class AuthUser(
 
 @Serializable
 data class AuthError(
-    val message: String = "Unknown error",
+    val message: String? = null,
+    val msg: String? = null,
     val error: String? = null,
     val error_description: String? = null
-)
+) {
+    val errorMessage: String
+        get() = msg ?: error_description ?: message ?: error ?: "Unknown error"
+}
 
 sealed class AuthResult {
     data class Success(val userId: String) : AuthResult()
@@ -721,4 +865,29 @@ data class VerifyOtpRequest(
     val type: String = "sms",
     val phone: String,
     val token: String
+)
+
+@Serializable
+data class RecoverRequest(
+    val email: String
+)
+
+@Serializable
+data class SendOtpEdgeRequest(
+    val phone: String
+)
+
+@Serializable
+data class VerifyOtpEdgeRequest(
+    val phone: String,
+    val otp: String,
+    val newPassword: String
+)
+
+@Serializable
+data class EdgeFunctionResponse(
+    val success: Boolean? = null,
+    val message: String? = null,
+    val error: String? = null,
+    val otp: String? = null
 )

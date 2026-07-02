@@ -17,7 +17,7 @@ import com.loopchat.app.data.PasskeyManager
 import kotlinx.coroutines.launch
 
 enum class AuthView {
-    LOGIN, SIGNUP
+    LOGIN, SIGNUP, FORGOT_PASSWORD
 }
 
 enum class LoginMethod {
@@ -52,6 +52,25 @@ class AuthViewModel : ViewModel() {
         private set
         
     var otpCode by mutableStateOf("")
+        private set
+        
+    // Forgot Password Flow States
+    var resetMethod by mutableStateOf(LoginMethod.EMAIL)
+        private set
+        
+    var resetEmailSent by mutableStateOf(false)
+        private set
+        
+    var resetOtpSent by mutableStateOf(false)
+        private set
+        
+    var passwordResetSuccess by mutableStateOf(false)
+        private set
+        
+    var phoneForReset by mutableStateOf("")
+        private set
+        
+    var devOtpReceived by mutableStateOf<String?>(null)
         private set
         
     
@@ -802,5 +821,113 @@ class AuthViewModel : ViewModel() {
     fun resetForm() {
         formState = AuthFormState()
         errorMessage = null
+    }
+
+    fun updateResetMethod(method: LoginMethod) {
+        resetMethod = method
+        errorMessage = null
+    }
+    
+    fun resetForgotPasswordState() {
+        resetEmailSent = false
+        resetOtpSent = false
+        passwordResetSuccess = false
+        phoneForReset = ""
+        devOtpReceived = null
+        errorMessage = null
+        formState = formState.copy(password = "", confirmPassword = "")
+        otpCode = ""
+    }
+    
+    fun handleForgotPasswordEmail() {
+        val email = formState.email
+        if (email.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+            errorMessage = "Please enter a valid email address"
+            return
+        }
+        
+        viewModelScope.launch {
+            isLoading = true
+            errorMessage = null
+            
+            val result = SupabaseClient.resetPasswordForEmail(email)
+            
+            if (result is AuthResult.Success) {
+                resetEmailSent = true
+                errorMessage = null
+            } else if (result is AuthResult.Error) {
+                errorMessage = result.message
+            }
+            isLoading = false
+        }
+    }
+    
+    fun handleForgotPasswordPhoneSend() {
+        val phone = formState.phone
+        if (phone.isBlank() || !phone.startsWith("+") || phone.length < 10) {
+            errorMessage = "Enter country code starting with + (e.g., +91...)"
+            return
+        }
+        
+        viewModelScope.launch {
+            isLoading = true
+            errorMessage = null
+            
+            val result = SupabaseClient.sendPasswordResetOtp(phone)
+            
+            result.onSuccess { response ->
+                if (response.error != null) {
+                    errorMessage = response.error
+                } else {
+                    phoneForReset = phone
+                    resetOtpSent = true
+                    otpCode = ""
+                    devOtpReceived = response.otp // Capture sandbox OTP if present
+                    errorMessage = null
+                }
+            }.onFailure { exception ->
+                errorMessage = exception.message ?: "Failed to send reset code"
+            }
+            isLoading = false
+        }
+    }
+    
+    fun handleForgotPasswordPhoneVerify(onSuccess: () -> Unit) {
+        if (otpCode.length < 6) {
+            errorMessage = "Please enter a 6-digit code"
+            return
+        }
+        if (formState.password.length < 6) {
+            errorMessage = "Password must be at least 6 characters"
+            return
+        }
+        if (formState.password != formState.confirmPassword) {
+            errorMessage = "Passwords do not match"
+            return
+        }
+        
+        viewModelScope.launch {
+            isLoading = true
+            errorMessage = null
+            
+            val result = SupabaseClient.verifyPasswordResetOtp(
+                phone = phoneForReset,
+                otp = otpCode,
+                newPassword = formState.password
+            )
+            
+            result.onSuccess { response ->
+                if (response.error != null) {
+                    errorMessage = response.error
+                } else {
+                    passwordResetSuccess = true
+                    errorMessage = null
+                    onSuccess()
+                }
+            }.onFailure { exception ->
+                errorMessage = exception.message ?: "Failed to reset password"
+            }
+            isLoading = false
+        }
     }
 }

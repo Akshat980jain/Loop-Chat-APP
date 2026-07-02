@@ -28,7 +28,7 @@ const App = () => {
           {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
           <Toaster />
           <Sonner />
-          <BrowserRouter>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <PushNotificationProvider />
             <IncomingCallHandler />
             <Routes>

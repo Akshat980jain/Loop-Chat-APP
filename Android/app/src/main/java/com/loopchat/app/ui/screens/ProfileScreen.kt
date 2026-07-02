@@ -492,6 +492,7 @@ fun ProfileScreen(
                             onClick = {
                                 scope.launch {
                                     SupabaseClient.signOut(context)
+                                    SupabaseClient.resetForReauth()
                                     onLogout()
                                 }
                             },

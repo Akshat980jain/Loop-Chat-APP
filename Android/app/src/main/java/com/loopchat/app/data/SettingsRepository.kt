@@ -184,6 +184,7 @@ class SettingsRepository(private val context: Context) {
             
             // Sign out from Supabase
             SupabaseClient.signOut(context)
+            SupabaseClient.resetForReauth()
             
             Log.d(TAG, "Logout successful")
             true
